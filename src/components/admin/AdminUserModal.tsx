@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { User, Role } from '../../types';
 import { useLms } from '../../context/LmsContext';
 import {
@@ -15,6 +15,9 @@ import {
   Hash,
   Sparkles,
   Info,
+  ChevronDown,
+  Check,
+  Search,
 } from 'lucide-react';
 
 interface AdminUserModalProps {
@@ -28,6 +31,7 @@ import {
   extractRollNumberDigits,
   formatStudentEmail,
   getDepartmentCode,
+  getFacultyHodBadge,
 } from '../../utils/studentEmail';
 
 export const AdminUserModal: React.FC<AdminUserModalProps> = ({
@@ -35,11 +39,19 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
   roleToCreate,
   onClose,
 }) => {
-  const { users, currentUser, departments, adminAddUser, adminUpdateUser, adminResetPassword, adminDeleteUser } = useLms();
+  const { users, currentUser, departments, semesters, adminAddUser, adminUpdateUser, adminResetPassword, adminDeleteUser } = useLms();
 
   const isEditing = !!userToEdit;
   const targetRole = userToEdit ? userToEdit.role : roleToCreate || 'student';
   const currentYear = new Date().getFullYear() || 2026;
+
+  const sortedSemesters = useMemo(() => [...semesters].sort((a, b) => a.number - b.number), [semesters]);
+
+  // Check if faculty member is HOD of any department
+  const facultyHodBadge = useMemo(() => {
+    if (targetRole !== 'teacher' || !userToEdit) return null;
+    return getFacultyHodBadge(userToEdit.id, departments);
+  }, [targetRole, userToEdit, departments]);
 
   // Extract university domain from the admin user or current user
   const adminUser = users.find((u) => u.role === 'admin') || (currentUser?.role === 'admin' ? currentUser : null);
@@ -48,10 +60,50 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
     ? adminEmail.split('@')[1].trim().toLowerCase()
     : 'nicore.edu.pk';
 
+  // Multi-department state for faculty members
+  const initialDepartments = useMemo(() => {
+    if (userToEdit) {
+      if (Array.isArray(userToEdit.departments) && userToEdit.departments.length > 0) {
+        return userToEdit.departments;
+      }
+      if (userToEdit.department) {
+        return [userToEdit.department];
+      }
+    }
+    return departments.length > 0 ? [departments[0].name] : ['Computer Science'];
+  }, [userToEdit, departments]);
+
+  const [selectedDepartments, setSelectedDepartments] = useState<string[]>(initialDepartments);
+
+  // Multi-department dropdown UI state for Faculty
+  const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
+  const [deptSearchQuery, setDeptSearchQuery] = useState('');
+  const deptDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (deptDropdownRef.current && !deptDropdownRef.current.contains(e.target as Node)) {
+        setIsDeptDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredModalDepts = useMemo(() => {
+    if (!deptSearchQuery.trim()) return departments;
+    const q = deptSearchQuery.toLowerCase();
+    return departments.filter(
+      (d) => d.name.toLowerCase().includes(q) || d.code.toLowerCase().includes(q)
+    );
+  }, [departments, deptSearchQuery]);
+
   // Common user fields
   const [name, setName] = useState(userToEdit?.name || '');
   const [password, setPassword] = useState(userToEdit?.password || 'password123');
-  const [department, setDepartment] = useState(userToEdit?.department || departments[0]?.name || 'Computer Science');
+  const [department, setDepartment] = useState(
+    userToEdit?.department || (departments.length > 0 ? departments[0].name : 'Computer Science')
+  );
   const [dob, setDob] = useState(userToEdit?.dob || '2003-01-01');
   const [phone, setPhone] = useState(userToEdit?.phone || '');
   const [address, setAddress] = useState(userToEdit?.address || '');
@@ -67,9 +119,16 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
   const [session, setSession] = useState<number>(
     isEditing ? userToEdit?.session || userToEdit?.sessionYear || currentYear : currentYear
   );
-  const [semester, setSemester] = useState<number>(
-    isEditing ? userToEdit?.semester || 1 : 1
-  );
+  const initialSemester = useMemo(() => {
+    if (isEditing && userToEdit?.semester) {
+      return userToEdit.semester;
+    }
+    const hasSem1 = sortedSemesters.some((s) => s.number === 1);
+    if (hasSem1) return 1;
+    return sortedSemesters[0]?.number || 1;
+  }, [isEditing, userToEdit, sortedSemesters]);
+
+  const [semester, setSemester] = useState<number>(initialSemester);
 
   // Initial roll number extraction (numeric digits for number input)
   const initialRoll = useMemo(() => {
@@ -144,16 +203,24 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
       }
     }
 
+    if (targetRole === 'teacher' && selectedDepartments.length === 0) {
+      setFormError('Please select at least one academic department for this faculty member.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     const finalEmail = targetRole === 'student' ? generatedStudentEmail : teacherEmail.trim().toLowerCase();
     const finalRollNumber = targetRole === 'student' ? cleanRoll : undefined;
+    const finalPrimaryDept = targetRole === 'teacher' ? selectedDepartments[0] : department;
+    const finalDeptList = targetRole === 'teacher' ? selectedDepartments : [department];
 
     if (isEditing && userToEdit) {
       await adminUpdateUser(userToEdit.id, {
         name,
         email: finalEmail,
-        department,
+        department: finalPrimaryDept,
+        departments: finalDeptList,
         session: targetRole === 'student' ? Number(session) : undefined,
         sessionYear: targetRole === 'student' ? Number(session) : undefined,
         rollNumber: finalRollNumber,
@@ -170,7 +237,8 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
         email: finalEmail,
         password,
         role: targetRole as Role,
-        department,
+        department: finalPrimaryDept,
+        departments: finalDeptList,
         session: targetRole === 'student' ? Number(session) : undefined,
         sessionYear: targetRole === 'student' ? Number(session) : undefined,
         rollNumber: finalRollNumber,
@@ -226,17 +294,24 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
           <div className="flex items-center gap-2">
             <UserPlus className="w-4 h-4 text-indigo-400" />
             <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider">
-                {isEditing
-                  ? `Manage ${targetRole.toUpperCase()}: ${userToEdit?.name}`
-                  : `Enroll New ${targetRole.toUpperCase()}`}
-              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-xs font-bold uppercase tracking-wider">
+                  {isEditing
+                    ? `Manage ${targetRole.toUpperCase()}: ${userToEdit?.name}`
+                    : `Enroll New ${targetRole.toUpperCase()}`}
+                </h3>
+                {facultyHodBadge && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-400 text-slate-950 font-mono shadow-xs flex items-center gap-1">
+                    👑 {facultyHodBadge}
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-slate-400">
                 {targetRole === 'student'
                   ? isEditing
                     ? 'Manage student profile, session year, semester, or reset credentials'
                     : 'Admit 1st semester student with automated institutional email and unique roll'
-                  : 'Manage faculty credentials, academic department and designation'}
+                  : 'Manage faculty credentials, academic departments and designation'}
               </p>
             </div>
           </div>
@@ -264,10 +339,10 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto flex-1">
           {/* Full Name & Department */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Full Name <span className="text-rose-500">*</span>
+                Full Legal Name <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
@@ -279,22 +354,207 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Academic Department <span className="text-rose-500">*</span>
-              </label>
-              <select
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500 font-medium"
-              >
-                {departments.map((d) => (
-                  <option key={d.id} value={d.name}>
-                    {d.name} ({d.code})
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Department Selection: Multi-select Dropdown for Faculty, Single select for Student */}
+            {targetRole === 'teacher' ? (
+              <div className="space-y-1.5" ref={deptDropdownRef}>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Academic Department <span className="text-rose-500">*</span> (Select one or more)
+                  </label>
+                  <span className="text-[10px] text-indigo-700 font-semibold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 font-mono">
+                    {selectedDepartments.length} {selectedDepartments.length === 1 ? 'Department' : 'Departments'} Selected
+                  </span>
+                </div>
+
+                {/* Dropdown Trigger Button */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsDeptDropdownOpen((prev) => !prev)}
+                    className={`w-full px-3 py-2 text-xs bg-slate-50 border rounded-md text-left flex items-center justify-between transition-all cursor-pointer ${
+                      isDeptDropdownOpen
+                        ? 'border-indigo-500 bg-white ring-2 ring-indigo-500/20'
+                        : 'border-slate-300 hover:border-slate-400'
+                    }`}
+                  >
+                    <span className="truncate font-medium text-slate-800">
+                      {selectedDepartments.length === 0
+                        ? 'Choose academic departments...'
+                        : selectedDepartments.length === 1
+                        ? `1 Selected: ${selectedDepartments[0]}`
+                        : `${selectedDepartments.length} Selected: ${selectedDepartments.slice(0, 2).join(', ')}${selectedDepartments.length > 2 ? '...' : ''}`}
+                    </span>
+                    <ChevronDown
+                      className={`w-4 h-4 text-slate-500 transition-transform duration-200 shrink-0 ml-2 ${
+                        isDeptDropdownOpen ? 'rotate-180 text-indigo-600' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {/* Dropdown Menu Popover with Search & Ticks */}
+                  {isDeptDropdownOpen && (
+                    <div className="absolute top-full left-0 right-0 z-40 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                      {/* Search bar inside dropdown */}
+                      <div className="p-2 border-b border-slate-100 bg-slate-50/80">
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            placeholder="Search among all departments..."
+                            value={deptSearchQuery}
+                            onChange={(e) => setDeptSearchQuery(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full pl-8 pr-2.5 py-1 text-xs bg-white border border-slate-200 rounded focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Department Items list */}
+                      <div className="max-h-56 overflow-y-auto p-1 divide-y divide-slate-100">
+                        {filteredModalDepts.length === 0 ? (
+                          <div className="py-5 text-center text-xs text-slate-400">
+                            No departments found matching "{deptSearchQuery}"
+                          </div>
+                        ) : (
+                          filteredModalDepts.map((d) => {
+                            const isSelected = selectedDepartments.includes(d.name);
+                            const isHodOfDept = d.hodId === userToEdit?.id;
+
+                            return (
+                              <button
+                                key={d.id}
+                                type="button"
+                                onClick={() => {
+                                  if (isSelected) {
+                                    if (selectedDepartments.length > 1) {
+                                      setSelectedDepartments((prev) => prev.filter((n) => n !== d.name));
+                                    }
+                                  } else {
+                                    setSelectedDepartments((prev) => [...prev, d.name]);
+                                  }
+                                }}
+                                className={`w-full px-3 py-2 text-xs flex items-center justify-between rounded-md transition-colors cursor-pointer text-left ${
+                                  isSelected
+                                    ? 'bg-indigo-50/80 text-indigo-950 font-semibold'
+                                    : 'hover:bg-slate-50 text-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  {/* Tick / Checkbox indicator */}
+                                  <div
+                                    className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border transition-all ${
+                                      isSelected
+                                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-2xs'
+                                        : 'border-slate-300 bg-white'
+                                    }`}
+                                  >
+                                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                  </div>
+                                  <span className="truncate">{d.name}</span>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 border border-slate-200 text-slate-600 font-bold uppercase">
+                                    {d.code}
+                                  </span>
+                                  {isHodOfDept && (
+                                    <span className="text-[9px] font-bold uppercase text-amber-800 bg-amber-100 border border-amber-300 px-1 py-0.2 rounded font-mono">
+                                      HOD
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Dropdown footer summary and close */}
+                      <div className="px-3 py-1.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>Click any department to toggle selection</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsDeptDropdownOpen(false)}
+                          className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Appointed To: Selected departments list with remove button */}
+                {selectedDepartments.length > 0 && (
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg mt-2">
+                    <div className="text-[11px] font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <span>Appointed To:</span>
+                        <strong className="text-indigo-700 font-bold">({selectedDepartments.length})</strong>
+                      </span>
+                      <span className="text-[10px] text-slate-400">Click × to remove</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {selectedDepartments.map((deptName) => {
+                        const deptObj = departments.find((d) => d.name === deptName);
+                        return (
+                          <span
+                            key={deptName}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white text-indigo-900 text-xs font-semibold border border-indigo-200 shadow-2xs group"
+                          >
+                            <span>{deptName}</span>
+                            {deptObj && (
+                              <span className="text-[9px] font-mono uppercase bg-indigo-100 text-indigo-800 px-1 py-0.2 rounded font-bold">
+                                {deptObj.code}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (selectedDepartments.length > 1) {
+                                  setSelectedDepartments((prev) => prev.filter((n) => n !== deptName));
+                                }
+                              }}
+                              disabled={selectedDepartments.length <= 1}
+                              title={
+                                selectedDepartments.length <= 1
+                                  ? 'At least one department is required'
+                                  : `Remove ${deptName}`
+                              }
+                              className={`p-0.5 rounded hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer ${
+                                selectedDepartments.length <= 1 ? 'opacity-30 cursor-not-allowed' : ''
+                              }`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Academic Department <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={department}
+                  onChange={(e) => {
+                    setDepartment(e.target.value);
+                    setSelectedDepartments([e.target.value]);
+                  }}
+                  className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500 font-medium"
+                >
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.name}>
+                      {d.name} ({d.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Student Specific: Session (Enrollment Year) & Semester */}
@@ -358,38 +618,29 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
                 {/* Semester */}
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                    <span>Current Semester</span>
-                    {!isEditing && <span className="text-[10px] text-slate-500">1st Semester Only</span>}
+                    <span>Academic Semester</span>
+                    <span className="text-[10px] text-slate-500 font-mono">{sortedSemesters.length} Configured</span>
                   </label>
-                  {isEditing ? (
-                    <input
-                      type="number"
-                      required
-                      min={1}
-                      max={8}
+                  {sortedSemesters.length === 0 ? (
+                    <div className="p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800">
+                      No semesters configured. Please add a semester in the directory first.
+                    </div>
+                  ) : (
+                    <select
                       value={semester}
                       onChange={(e) => setSemester(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 font-mono"
-                    />
-                  ) : (
-                    <div className="relative">
-                      <input
-                        type="number"
-                        readOnly
-                        disabled
-                        value={1}
-                        className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-300 rounded-md font-mono text-slate-700 cursor-not-allowed select-none"
-                      />
-                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-medium text-slate-500">
-                        1st Semester Fixed
-                      </span>
-                    </div>
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 font-mono cursor-pointer"
+                    >
+                      {sortedSemesters.map((s) => (
+                        <option key={s.id} value={s.number}>
+                          Semester {s.number} ({s.name})
+                        </option>
+                      ))}
+                    </select>
                   )}
-                  {!isEditing && (
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      All new student candidates begin in 1st Semester. Editable anytime in Manage & Reset.
-                    </p>
-                  )}
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Synchronized with terms configured in the Academic Semesters Directory.
+                  </p>
                 </div>
               </div>
             </div>

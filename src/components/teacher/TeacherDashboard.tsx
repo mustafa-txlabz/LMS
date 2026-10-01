@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLms, calculateGradeDetails } from '../../context/LmsContext';
 import { Course, User, AttendanceStatus, StudentMarks } from '../../types';
-import { formatStudentRollNumber } from '../../utils/studentEmail';
+import { formatStudentRollNumber, getUserPrimaryDepartment } from '../../utils/studentEmail';
 import {
   BookOpen,
   Award,
@@ -235,7 +235,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Faculty Teaching Portal · {currentUser.department}
+            Faculty Teaching Portal · {currentUser.departments && currentUser.departments.length > 0 ? currentUser.departments.join(', ') : currentUser.department}
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-0.5">
             {currentUser.name}
@@ -574,7 +574,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                           }`}
                         >
                           <td className="py-3 px-3 font-mono font-bold text-slate-900">
-                            {formatStudentRollNumber(student.session || student.sessionYear, student.department, student.rollNumber)}
+                            {formatStudentRollNumber(student.session || student.sessionYear, getUserPrimaryDepartment(student), student.rollNumber)}
                           </td>
                           <td className="py-3 px-3">
                             <div className="font-semibold text-slate-900">{student.name}</div>
@@ -782,7 +782,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                           <div>
                             <div className="font-semibold text-slate-900">{s.name}</div>
                             <div className="text-[11px] font-mono text-slate-500 font-semibold">
-                              {formatStudentRollNumber(s.session || s.sessionYear, s.department, s.rollNumber)}
+                              {formatStudentRollNumber(s.session || s.sessionYear, getUserPrimaryDepartment(s), s.rollNumber)}
                             </div>
                           </div>
 
@@ -1010,11 +1010,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                   return (
                     <tr key={s.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
                       <td className="py-3 px-4 font-mono font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
-                        {formatStudentRollNumber(s.session || s.sessionYear, s.department, s.rollNumber)}
+                        {formatStudentRollNumber(s.session || s.sessionYear, getUserPrimaryDepartment(s), s.rollNumber)}
                       </td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-900">{s.name}</div>
-                        <div className="text-[11px] text-slate-400">{s.department}</div>
+                        <div className="text-[11px] text-slate-400">{getUserPrimaryDepartment(s)}</div>
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-500 text-[11px]">
                         {s.email}

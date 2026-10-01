@@ -6,7 +6,8 @@ export interface User {
   email: string;
   role: Role;
   avatar?: string;
-  department: string;
+  departments: string[]; // Unified departments array
+  department?: string; // Optional legacy compatibility field
   rollNumber?: string; // For students, e.g. 29 or CS-2023-042
   session?: number; // Enrollment session year, e.g. 2026 or 2021
   sessionYear?: number; // Alias for session

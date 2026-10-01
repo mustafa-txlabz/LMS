@@ -57,7 +57,7 @@ const UserSchema = new mongooseLib.Schema(
     password: { type: String, default: 'password123' },
     role: { type: String, enum: ['admin', 'teacher', 'student'], required: true },
     avatar: { type: String },
-    department: { type: String, default: 'Computer Science' },
+    departments: { type: [String], default: ['Computer Science'] },
     rollNumber: { type: String },
     session: { type: Number, default: 2026 },
     designation: { type: String },
@@ -199,7 +199,14 @@ const DepartmentModel = mongooseLib.model('Department', DepartmentSchema);
 
 // In-Memory store fallback if MongoDB Atlas is disconnected or network blocked
 let isMongoConnected = false;
-let memoryUsers = [...INITIAL_USERS];
+let memoryUsers = INITIAL_USERS.map((u: any) => {
+  const depts = Array.isArray(u.departments) && u.departments.length > 0
+    ? u.departments
+    : (u.department ? [u.department] : ['Computer Science']);
+  const copy = { ...u, departments: depts };
+  delete copy.department;
+  return copy;
+});
 let memorySemesters = [...INITIAL_SEMESTERS];
 let memoryCourses = [...INITIAL_COURSES];
 let memoryEnrollments = [...INITIAL_ENROLLMENTS];
@@ -243,6 +250,29 @@ async function initMongoDB() {
       await DepartmentModel.insertMany(INITIAL_DEPARTMENTS);
       console.log('[MongoDB] Departments seeded successfully!');
     }
+
+    // Raw collection migration: Export legacy 'department' string to 'departments' array, then unset 'department'
+    try {
+      const col = UserModel.collection;
+      const legacyCursor = col.find({ department: { $exists: true } });
+      while (await legacyCursor.hasNext()) {
+        const doc: any = await legacyCursor.next();
+        const currentDepts = Array.isArray(doc.departments) ? doc.departments : [];
+        if (doc.department && !currentDepts.includes(doc.department)) {
+          currentDepts.push(doc.department);
+        }
+        await col.updateOne(
+          { _id: doc._id },
+          {
+            $set: { departments: currentDepts.length > 0 ? currentDepts : ['Computer Science'] },
+            $unset: { department: '' },
+          }
+        );
+      }
+      console.log('[Migration] Successfully exported legacy department data and removed department field from raw database!');
+    } catch (migErr: any) {
+      console.error('[Migration Notice]', migErr.message);
+    }
   } catch (err: any) {
     console.error('[MongoDB] Connection error (using in-memory fallback):', err.message);
     isMongoConnected = false;
@@ -267,9 +297,19 @@ app.get('/api/bootstrap', async (_req: Request, res: Response) => {
         NotificationModel.find().lean(),
         DepartmentModel.find().lean(),
       ]);
+
+      const sanitizedUsers = users.map((u: any) => {
+        const depts = Array.isArray(u.departments) && u.departments.length > 0
+          ? u.departments
+          : (u.department ? [u.department] : ['Computer Science']);
+        const copy = { ...u, departments: depts };
+        delete copy.department;
+        return copy;
+      });
+
       return res.json({
         dbConnected: true,
-        users,
+        users: sanitizedUsers,
         semesters,
         courses,
         enrollments,
@@ -280,9 +320,18 @@ app.get('/api/bootstrap', async (_req: Request, res: Response) => {
       });
     }
 
+    const sanitizedUsers = memoryUsers.map((u: any) => {
+      const depts = Array.isArray(u.departments) && u.departments.length > 0
+        ? u.departments
+        : (u.department ? [u.department] : ['Computer Science']);
+      const copy = { ...u, departments: depts };
+      delete copy.department;
+      return copy;
+    });
+
     return res.json({
       dbConnected: false,
-      users: memoryUsers,
+      users: sanitizedUsers,
       semesters: memorySemesters,
       courses: memoryCourses,
       enrollments: memoryEnrollments,
@@ -518,6 +567,7 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
     password,
     role,
     department,
+    departments,
     rollNumber,
     session,
     designation,
@@ -532,13 +582,17 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Name, email, and role are required' });
   }
 
+  const assignedDepts: string[] = Array.isArray(departments) && departments.length > 0
+    ? departments
+    : department ? [department] : ['Computer Science'];
+
   const newUser: any = {
     id: `usr-${role}-${Date.now()}`,
     name,
     email: email.trim().toLowerCase(),
     password: password || 'password123',
     role,
-    department: department || 'Computer Science',
+    departments: assignedDepts,
     rollNumber: role === 'student' ? rollNumber || '1' : undefined,
     session: role === 'student' ? Number(session) || 2026 : undefined,
     designation: role === 'teacher' ? designation || 'Assistant Professor' : undefined,
@@ -569,11 +623,20 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
 // Admin Update Student or Teacher
 app.put('/api/admin/users/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const updates = req.body;
+  const updates = { ...req.body };
+
+  if (updates.department && !updates.departments) {
+    updates.departments = [updates.department];
+  }
+  delete updates.department;
 
   try {
     if (isMongoConnected) {
-      const updated = await UserModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+      const updated = await UserModel.findOneAndUpdate(
+        { id },
+        { $set: updates, $unset: { department: '' } },
+        { new: true }
+      ).lean();
       if (!updated) return res.status(404).json({ error: 'User not found' });
       const { password: _, ...sanitized } = updated;
       return res.json({ user: sanitized, success: true });
@@ -583,6 +646,7 @@ app.put('/api/admin/users/:id', async (req: Request, res: Response) => {
     if (idx === -1) return res.status(404).json({ error: 'User not found' });
 
     memoryUsers[idx] = { ...memoryUsers[idx], ...updates };
+    delete memoryUsers[idx].department;
     const { password: _, ...sanitized } = memoryUsers[idx];
     return res.json({ user: sanitized, success: true });
   } catch (err: any) {
@@ -833,7 +897,7 @@ app.put('/api/admin/departments/:id', async (req: Request, res: Response) => {
 
       // If department was renamed, cascade update to users and courses
       if (oldName !== cleanName) {
-        await UserModel.updateMany({ department: oldName }, { $set: { department: cleanName } });
+        await UserModel.updateMany({ departments: oldName }, { $set: { 'departments.$': cleanName } });
         await CourseModel.updateMany({ department: oldName }, { $set: { department: cleanName } });
       }
 
@@ -878,7 +942,10 @@ app.put('/api/admin/departments/:id', async (req: Request, res: Response) => {
       };
 
       if (oldName !== cleanName) {
-        memoryUsers = memoryUsers.map((u) => (u.department === oldName ? { ...u, department: cleanName } : u));
+        memoryUsers = memoryUsers.map((u) => {
+          const depts = (u.departments || []).map((d: string) => (d === oldName ? cleanName : d));
+          return { ...u, departments: depts };
+        });
         memoryCourses = memoryCourses.map((c) => (c.department === oldName ? { ...c, department: cleanName } : c));
       }
 
@@ -985,6 +1052,148 @@ app.put('/api/semesters/:id/toggle-reg', async (req: Request, res: Response) => 
       }
     }
     return res.status(404).json({ error: 'Semester not found' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Add Semester
+app.post('/api/admin/semesters', async (req: Request, res: Response) => {
+  const { name, code, number, startDate, endDate, isRegistrationOpen, isCurrent } = req.body;
+
+  if (!name || !code || number === undefined || number === null) {
+    return res.status(400).json({ error: 'Name, code, and semester number are required' });
+  }
+
+  const semNum = Number(number);
+  if (isNaN(semNum) || semNum < 1 || semNum > 8) {
+    return res.status(400).json({ error: 'Semester number must be between 1 and 8' });
+  }
+
+  try {
+    if (isMongoConnected) {
+      const count = await SemesterModel.countDocuments();
+      if (count >= 8) {
+        return res.status(400).json({ error: 'Maximum limit of 8 semesters reached. No more semesters can be created.' });
+      }
+      const existing = await SemesterModel.findOne({ number: semNum });
+      if (existing) {
+        return res.status(400).json({ error: `Semester number ${semNum} already exists (${existing.name}).` });
+      }
+
+      if (isCurrent) {
+        await SemesterModel.updateMany({}, { $set: { isCurrent: false } });
+      }
+
+      const newSem = {
+        id: `sem-${Date.now()}`,
+        name: name.trim(),
+        code: code.trim().toUpperCase(),
+        number: semNum,
+        startDate: startDate || new Date().toISOString().slice(0, 10),
+        endDate: endDate || new Date(Date.now() + 120 * 86400000).toISOString().slice(0, 10),
+        isRegistrationOpen: isRegistrationOpen !== undefined ? Boolean(isRegistrationOpen) : true,
+        isCurrent: Boolean(isCurrent),
+      };
+
+      await SemesterModel.create(newSem);
+      return res.json({ semester: newSem, success: true });
+    }
+
+    if (memorySemesters.length >= 8) {
+      return res.status(400).json({ error: 'Maximum limit of 8 semesters reached. No more semesters can be created.' });
+    }
+    const existing = memorySemesters.find((s) => s.number === semNum);
+    if (existing) {
+      return res.status(400).json({ error: `Semester number ${semNum} already exists (${existing.name}).` });
+    }
+
+    if (isCurrent) {
+      memorySemesters = memorySemesters.map((s) => ({ ...s, isCurrent: false }));
+    }
+
+    const newSem = {
+      id: `sem-${Date.now()}`,
+      name: name.trim(),
+      code: code.trim().toUpperCase(),
+      number: semNum,
+      startDate: startDate || new Date().toISOString().slice(0, 10),
+      endDate: endDate || new Date(Date.now() + 120 * 86400000).toISOString().slice(0, 10),
+      isRegistrationOpen: isRegistrationOpen !== undefined ? Boolean(isRegistrationOpen) : true,
+      isCurrent: Boolean(isCurrent),
+    };
+
+    memorySemesters.unshift(newSem);
+    return res.json({ semester: newSem, success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Update Semester
+app.put('/api/admin/semesters/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+
+  try {
+    if (updates.number !== undefined && updates.number !== null) {
+      const num = Number(updates.number);
+      if (isNaN(num) || num < 1 || num > 8) {
+        return res.status(400).json({ error: 'Semester number must be between 1 and 8' });
+      }
+      updates.number = num;
+
+      if (isMongoConnected) {
+        const conflict = await SemesterModel.findOne({ id: { $ne: id }, number: num });
+        if (conflict) {
+          return res.status(400).json({ error: `Semester number ${num} is already used by ${conflict.name}.` });
+        }
+      } else {
+        const conflict = memorySemesters.find((s) => s.id !== id && s.number === num);
+        if (conflict) {
+          return res.status(400).json({ error: `Semester number ${num} is already used by ${conflict.name}.` });
+        }
+      }
+    }
+
+    if (updates.isCurrent) {
+      if (isMongoConnected) {
+        await SemesterModel.updateMany({ id: { $ne: id } }, { $set: { isCurrent: false } });
+      } else {
+        memorySemesters = memorySemesters.map((s) => (s.id === id ? s : { ...s, isCurrent: false }));
+      }
+    }
+
+    if (isMongoConnected) {
+      const updated = await SemesterModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+      if (!updated) return res.status(404).json({ error: 'Semester not found' });
+      return res.json({ semester: updated, success: true });
+    }
+
+    const idx = memorySemesters.findIndex((s) => s.id === id);
+    if (idx !== -1) {
+      memorySemesters[idx] = { ...memorySemesters[idx], ...updates };
+      return res.json({ semester: memorySemesters[idx], success: true });
+    }
+    return res.status(404).json({ error: 'Semester not found' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Delete Semester
+app.delete('/api/admin/semesters/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    if (isMongoConnected) {
+      await SemesterModel.deleteOne({ id });
+      await CourseModel.updateMany({ semesterId: id }, { $set: { semesterId: '' } });
+    } else {
+      memorySemesters = memorySemesters.filter((s) => s.id !== id);
+      memoryCourses = memoryCourses.map((c) => (c.semesterId === id ? { ...c, semesterId: '' } : c));
+    }
+    return res.json({ success: true, message: 'Semester deleted successfully' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

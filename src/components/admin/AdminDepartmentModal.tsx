@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useLms } from '../../context/LmsContext';
 import { Department, User } from '../../types';
-import { suggestDepartmentCode } from '../../utils/studentEmail';
+import { suggestDepartmentCode, getFacultyHodBadge } from '../../utils/studentEmail';
 import {
   Building2,
   X,
@@ -362,6 +362,7 @@ export const AdminDepartmentModal: React.FC<AdminDepartmentModalProps> = ({
               <option value="">-- No HOD Assigned (Unassigned) --</option>
               {displayedTeachers.map((t) => {
                 const isHodOfOther = getTeacherHodStatus(t.id);
+                const hodBadge = getFacultyHodBadge(t.id, departments);
                 return (
                   <option
                     key={t.id}
@@ -369,7 +370,7 @@ export const AdminDepartmentModal: React.FC<AdminDepartmentModalProps> = ({
                     disabled={false}
                     className={isHodOfOther ? 'text-amber-800' : 'text-slate-900'}
                   >
-                    {t.name} ({t.designation || 'Faculty'} · {t.department})
+                    {t.name} {hodBadge ? `[👑 ${hodBadge}]` : ''} ({t.designation || 'Faculty'} · {t.department})
                     {isHodOfOther ? ` [⚠️ Already HOD of ${isHodOfOther}]` : ' [Available]'}
                   </option>
                 );

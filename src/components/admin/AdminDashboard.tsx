@@ -1,9 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useLms } from '../../context/LmsContext';
 import { Course, Semester, User, Department } from '../../types';
 import { AdminUserModal } from './AdminUserModal';
 import { AdminDepartmentModal } from './AdminDepartmentModal';
-import { formatStudentRollNumber } from '../../utils/studentEmail';
+import {
+  formatStudentRollNumber,
+  getFacultyHodBadge,
+  getUserPrimaryDepartment,
+  getUserDepartments,
+} from '../../utils/studentEmail';
 import {
   Users,
   GraduationCap,
@@ -51,6 +56,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     adminDeleteUser,
     toggleSemesterRegistration,
     addSemester,
+    updateSemester,
+    deleteSemester,
     setIsProfileModalOpen,
   } = useLms();
 
@@ -162,22 +169,169 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [formCapacity, setFormCapacity] = useState(40);
   const [formDescription, setFormDescription] = useState('');
 
-  // Form state for New Semester
-  const [newSemName, setNewSemName] = useState('Spring 2027');
-  const [newSemCode, setNewSemCode] = useState('SP27');
-  const [newSemNumber, setNewSemNumber] = useState(6);
-  const [newSemStart, setNewSemStart] = useState('2027-02-01');
-  const [newSemEnd, setNewSemEnd] = useState('2027-06-30');
+  // Check if a teacher belongs to a department (supporting multi-department faculty)
+  const isTeacherInDept = (t: User, deptName: string) => {
+    if (Array.isArray(t.departments) && t.departments.length > 0) {
+      return t.departments.includes(deptName);
+    }
+    return t.department === deptName;
+  };
+
+  // Only teachers belonging to selected department
+  const eligibleTeachersForCourse = useMemo(() => {
+    return teachers.filter((t) => isTeacherInDept(t, formDepartment));
+  }, [teachers, formDepartment]);
+
+  // Semester Management States
+  const [editingSemester, setEditingSemester] = useState<Semester | null>(null);
+  const [semesterToDelete, setSemesterToDelete] = useState<Semester | null>(null);
+  const [isDeletingSemester, setIsDeletingSemester] = useState(false);
+  const [semesterError, setSemesterError] = useState<string | null>(null);
+
+  // Form state for Add / Edit Semester
+  const [semFormName, setSemFormName] = useState('');
+  const [semFormCode, setSemFormCode] = useState('');
+  const [semFormNumber, setSemFormNumber] = useState<number>(1);
+  const [semFormStart, setSemFormStart] = useState('');
+  const [semFormEnd, setSemFormEnd] = useState('');
+  const [semFormRegOpen, setSemFormRegOpen] = useState(true);
+  const [semFormIsCurrent, setSemFormIsCurrent] = useState(false);
+
+  const existingSemesterNumbers = useMemo(() => semesters.map((s) => s.number), [semesters]);
+  const isMaxSemestersReached = semesters.length >= 8;
+  const sortedSemesters = useMemo(() => [...semesters].sort((a, b) => a.number - b.number), [semesters]);
+
+  const openAddSemester = () => {
+    if (isMaxSemestersReached) return;
+    const available = [1, 2, 3, 4, 5, 6, 7, 8].filter((n) => !existingSemesterNumbers.includes(n));
+    const nextNum = available[0] || 1;
+    const isFall = nextNum % 2 !== 0;
+    const currentYear = new Date().getFullYear();
+    const semYear = currentYear + Math.floor((nextNum - 1) / 2);
+    const defaultName = `${isFall ? 'Fall' : 'Spring'} ${semYear}`;
+    const defaultCode = `${isFall ? 'FA' : 'SP'}${String(semYear).slice(2)}`;
+
+    setEditingSemester(null);
+    setSemFormName(defaultName);
+    setSemFormCode(defaultCode);
+    setSemFormNumber(nextNum);
+    setSemFormStart(isFall ? `${semYear}-09-01` : `${semYear}-02-01`);
+    setSemFormEnd(isFall ? `${semYear + 1}-01-20` : `${semYear}-06-30`);
+    setSemFormRegOpen(true);
+    setSemFormIsCurrent(false);
+    setSemesterError(null);
+    setIsAddSemesterOpen(true);
+  };
+
+  const openEditSemester = (sem: Semester) => {
+    setEditingSemester(sem);
+    setSemFormName(sem.name);
+    setSemFormCode(sem.code);
+    setSemFormNumber(sem.number);
+    setSemFormStart(sem.startDate);
+    setSemFormEnd(sem.endDate);
+    setSemFormRegOpen(sem.isRegistrationOpen);
+    setSemFormIsCurrent(sem.isCurrent);
+    setSemesterError(null);
+    setIsAddSemesterOpen(true);
+  };
+
+  const handleSaveSemester = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSemesterError(null);
+
+    const semNum = Number(semFormNumber);
+    if (isNaN(semNum) || semNum < 1 || semNum > 8) {
+      setSemesterError('Semester number must be an integer between 1 and 8.');
+      return;
+    }
+
+    if (editingSemester) {
+      const duplicate = semesters.some((s) => s.id !== editingSemester.id && s.number === semNum);
+      if (duplicate) {
+        setSemesterError(`Semester number ${semNum} already exists in another semester record.`);
+        return;
+      }
+
+      const res = await updateSemester(editingSemester.id, {
+        name: semFormName.trim(),
+        code: semFormCode.trim().toUpperCase(),
+        number: semNum,
+        startDate: semFormStart,
+        endDate: semFormEnd,
+        isRegistrationOpen: semFormRegOpen,
+        isCurrent: semFormIsCurrent,
+      });
+
+      if (!res.success) {
+        setSemesterError(res.error || 'Failed to update semester.');
+        return;
+      }
+      setDeleteToast(`Semester "${semFormName}" successfully updated.`);
+      setTimeout(() => setDeleteToast(null), 3500);
+      setIsAddSemesterOpen(false);
+    } else {
+      if (isMaxSemestersReached) {
+        setSemesterError('Maximum limit of 8 semesters reached. No more semesters can be created.');
+        return;
+      }
+
+      if (existingSemesterNumbers.includes(semNum)) {
+        setSemesterError(`Semester number ${semNum} already exists. You cannot add duplicate semester numbers.`);
+        return;
+      }
+
+      const res = await addSemester({
+        name: semFormName.trim(),
+        code: semFormCode.trim().toUpperCase(),
+        number: semNum,
+        startDate: semFormStart,
+        endDate: semFormEnd,
+        isRegistrationOpen: semFormRegOpen,
+        isCurrent: semFormIsCurrent,
+      });
+
+      if (!res.success) {
+        setSemesterError(res.error || 'Failed to create semester.');
+        return;
+      }
+      setDeleteToast(`Semester "${semFormName}" (Semester ${semNum}) created successfully.`);
+      setTimeout(() => setDeleteToast(null), 3500);
+      setIsAddSemesterOpen(false);
+    }
+  };
+
+  const handleConfirmDeleteSemester = async () => {
+    if (!semesterToDelete) return;
+    setIsDeletingSemester(true);
+    try {
+      const res = await deleteSemester(semesterToDelete.id);
+      if (res.success) {
+        setDeleteToast(`Semester "${semesterToDelete.name}" (Semester ${semesterToDelete.number}) has been deleted.`);
+        setTimeout(() => setDeleteToast(null), 3500);
+        setSemesterToDelete(null);
+      } else {
+        setDeleteToast(res.error || 'Failed to delete semester.');
+        setTimeout(() => setDeleteToast(null), 3500);
+      }
+    } finally {
+      setIsDeletingSemester(false);
+    }
+  };
 
   const openAddCourse = () => {
+    if (sortedSemesters.length === 0) return;
     setEditingCourse(null);
     setFormCode('');
     setFormTitle('');
-    setFormSemesterId(currentSemester.id);
-    setFormSemesterNumber(currentSemester.number);
+    const defaultSem = sortedSemesters.find((s) => s.isCurrent) || sortedSemesters[0];
+    setFormSemesterId(defaultSem ? defaultSem.id : currentSemester.id);
+    setFormSemesterNumber(defaultSem ? defaultSem.number : currentSemester.number);
     setFormCreditHours(3);
-    setFormDepartment(departments[0]?.name || 'Computer Science');
-    setFormTeacherId(teachers[0]?.id || '');
+    const initialDept = departments[0]?.name || 'Computer Science';
+    setFormDepartment(initialDept);
+    const eligible = teachers.filter((t) => isTeacherInDept(t, initialDept));
+    setFormTeacherId(eligible[0]?.id || '');
     setFormSchedule('Mon & Wed · 10:00 AM – 11:30 AM');
     setFormRoom('Hall 402 · Computing Wing');
     setFormCapacity(40);
@@ -189,8 +343,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setEditingCourse(course);
     setFormCode(course.code);
     setFormTitle(course.title);
-    setFormSemesterId(course.semesterId);
-    setFormSemesterNumber(course.semesterNumber);
+    const matchedSem = sortedSemesters.find((s) => s.id === course.semesterId) ||
+                       sortedSemesters.find((s) => s.number === course.semesterNumber) ||
+                       sortedSemesters[0];
+    setFormSemesterId(matchedSem ? matchedSem.id : course.semesterId);
+    setFormSemesterNumber(matchedSem ? matchedSem.number : course.semesterNumber);
     setFormCreditHours(course.creditHours);
     setFormDepartment(course.department);
     setFormTeacherId(course.teacherId);
@@ -205,13 +362,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     e.preventDefault();
     const assignedTeacher = teachers.find((t) => t.id === formTeacherId);
     const teacherName = assignedTeacher ? assignedTeacher.name : 'Faculty Staff';
+    const matchedSem = sortedSemesters.find((s) => s.id === formSemesterId);
+    const semNumber = matchedSem ? matchedSem.number : Number(formSemesterNumber);
 
     if (editingCourse) {
       updateCourse(editingCourse.id, {
         code: formCode,
         title: formTitle,
         semesterId: formSemesterId,
-        semesterNumber: Number(formSemesterNumber),
+        semesterNumber: semNumber,
         creditHours: Number(formCreditHours),
         department: formDepartment,
         teacherId: formTeacherId,
@@ -226,7 +385,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         code: formCode,
         title: formTitle,
         semesterId: formSemesterId,
-        semesterNumber: Number(formSemesterNumber),
+        semesterNumber: semNumber,
         creditHours: Number(formCreditHours),
         department: formDepartment,
         teacherId: formTeacherId,
@@ -240,26 +399,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsAddCourseOpen(false);
   };
 
-  const handleCreateSemester = (e: React.FormEvent) => {
-    e.preventDefault();
-    addSemester({
-      name: newSemName,
-      code: newSemCode,
-      number: Number(newSemNumber),
-      startDate: newSemStart,
-      endDate: newSemEnd,
-      isRegistrationOpen: true,
-      isCurrent: false,
-    });
-    setIsAddSemesterOpen(false);
-  };
-
-  // Filtered courses
+  // Filtered courses strictly synced with existing semesters
   const filteredCourses = courses.filter((c) => {
-    const matchesSemester =
-      selectedSemesterFilter === 'all' ||
-      c.semesterId === selectedSemesterFilter ||
-      c.semesterNumber.toString() === selectedSemesterFilter;
+    let matchesSemester = true;
+    if (selectedSemesterFilter !== 'all') {
+      const targetSem = sortedSemesters.find((s) => s.id === selectedSemesterFilter);
+      if (!targetSem) {
+        matchesSemester = false;
+      } else {
+        matchesSemester = c.semesterId === targetSem.id || c.semesterNumber === targetSem.number;
+      }
+    }
     const matchesSearch =
       c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -268,194 +418,133 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return matchesSemester && matchesSearch;
   });
 
+  // Automatically reset filter if selected semester is deleted
+  useEffect(() => {
+    if (selectedSemesterFilter !== 'all' && !semesters.some((s) => s.id === selectedSemesterFilter)) {
+      setSelectedSemesterFilter('all');
+    }
+  }, [semesters, selectedSemesterFilter]);
+
   return (
     <div className="space-y-6">
-      {/* Page Header with Registrar Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            University Academic Administration
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Overall system analytics, semester course scheduling, faculty assignment, and registration control.
-          </p>
+      {/* Toast Notification */}
+      {deleteToast && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium rounded-lg flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{deleteToast}</span>
         </div>
+      )}
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsProfileModalOpen(true)}
-            className="px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 transition-all duration-150 shadow-2xs hover:scale-[1.02] active:scale-95 flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-            title="Reset or change your Dean/Registrar password"
-          >
-            <KeyRound className="w-3.5 h-3.5" />
-            <span>Reset My Password</span>
-          </button>
-          <button
-            onClick={() => setIsAddSemesterOpen(true)}
-            className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-all duration-150 shadow-2xs hover:scale-[1.02] active:scale-95 whitespace-nowrap cursor-pointer"
-          >
-            + New Semester
-          </button>
-          <button
-            onClick={openAddCourse}
-            className="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md transition-all duration-150 shadow-xs hover:scale-[1.02] active:scale-95 flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Course</span>
-          </button>
-        </div>
-      </div>
-
-      {/* KPI Stat Cards with rich hover lifts & icon rotations */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-indigo-300 transition-all duration-200 cursor-default group">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Enrolled Students</span>
-            <Users className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-indigo-900 transition-colors">
-            {analytics.totalStudents}
-          </div>
-          <div className="mt-1 text-[11px] text-emerald-600 font-medium">Active roster</div>
-        </div>
-
-        <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-blue-300 transition-all duration-200 cursor-default group">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Faculty Members</span>
-            <GraduationCap className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-blue-900 transition-colors">
-            {analytics.totalTeachers}
-          </div>
-          <div className="mt-1 text-[11px] text-slate-500">Across 4 departments</div>
-        </div>
-
-        <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-indigo-300 transition-all duration-200 cursor-default group">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Total Courses</span>
-            <BookOpen className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-indigo-900 transition-colors">
-            {analytics.totalCourses}
-          </div>
-          <div className="mt-1 text-[11px] text-slate-500">Active curriculum</div>
-        </div>
-
-        <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-purple-300 transition-all duration-200 cursor-default group">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Registrations</span>
-            <Layers className="w-3.5 h-3.5 text-slate-400 group-hover:text-purple-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-purple-900 transition-colors">
-            {analytics.totalEnrollments}
-          </div>
-          <div className="mt-1 text-[11px] text-slate-500">Course seatings</div>
-        </div>
-
-        <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-emerald-300 transition-all duration-200 cursor-default group">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Avg Attendance</span>
-            <CheckCircle2 className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-emerald-900 transition-colors">
-            {analytics.averageAttendanceRate}%
-          </div>
-          <div className="mt-1 text-[11px] text-emerald-600 font-medium">&gt; 75% threshold</div>
-        </div>
-
-        <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-amber-300 transition-all duration-200 cursor-default group">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Avg Univ GPA</span>
-            <Award className="w-3.5 h-3.5 text-slate-400 group-hover:text-amber-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-amber-900 transition-colors">
-            {analytics.averageGpa.toFixed(2)}
-          </div>
-          <div className="mt-1 text-[11px] text-slate-500">Scale of 4.00</div>
-        </div>
-      </div>
-
-      {/* Navigation Sub-Tabs */}
-      <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-        <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg">
-          <button
-            onClick={() => handleTabChange('analytics')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-95 cursor-pointer ${
-              currentTab === 'analytics'
-                ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            System Analytics & Metrics
-          </button>
-          <button
-            onClick={() => handleTabChange('courses')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-95 cursor-pointer ${
-              currentTab === 'courses'
-                ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            Semester Courses ({courses.length})
-          </button>
-          <button
-            onClick={() => handleTabChange('faculty')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-95 cursor-pointer ${
-              currentTab === 'faculty'
-                ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            Faculty Directory ({teachers.length})
-          </button>
-          <button
-            onClick={() => handleTabChange('students')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-95 cursor-pointer ${
-              currentTab === 'students'
-                ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            Student Roster ({students.length})
-          </button>
-          <button
-            onClick={() => handleTabChange('departments')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
-              currentTab === 'departments'
-                ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Departments ({departments.length})</span>
-          </button>
-        </div>
-
-        {/* Semester Registration Windows Quick Switcher */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500 hidden sm:inline">Registration Window:</span>
-          <button
-            onClick={() => toggleSemesterRegistration(currentSemester.id)}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-md border transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
-              currentSemester.isRegistrationOpen
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
-                : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 hover:border-rose-300'
-            }`}
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                currentSemester.isRegistrationOpen ? 'bg-emerald-600 animate-pulse' : 'bg-rose-600'
-              }`}
-            />
-            <span>
-              {currentSemester.name}: {currentSemester.isRegistrationOpen ? 'Open (Toggle)' : 'Closed (Toggle)'}
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {/* Tab 1: System Analytics */}
+      {/* Tab 1: System Analytics Page */}
       {currentTab === 'analytics' && (
+        <div className="space-y-6 animate-fade-in-up">
+          {/* Analytics Page Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+                  System Analytics & Metrics
+                </h1>
+                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-mono">
+                  Live Institutional Overview
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Overall system analytics, academic performance metrics, enrollment volume, and attendance compliance.
+              </p>
+            </div>
+
+            {/* Semester Registration Window Quick Switcher */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 hidden sm:inline">Registration Window:</span>
+              <button
+                onClick={() => toggleSemesterRegistration(currentSemester.id)}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md border transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                  currentSemester.isRegistrationOpen
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
+                    : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 hover:border-rose-300'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    currentSemester.isRegistrationOpen ? 'bg-emerald-600 animate-pulse' : 'bg-rose-600'
+                  }`}
+                />
+                <span>
+                  {currentSemester.name}: {currentSemester.isRegistrationOpen ? 'Open (Toggle)' : 'Closed (Toggle)'}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Stat Cards with rich hover lifts & icon rotations */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-indigo-300 transition-all duration-200 cursor-default group">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>Enrolled Students</span>
+                <Users className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
+              </div>
+              <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-indigo-900 transition-colors">
+                {analytics.totalStudents}
+              </div>
+              <div className="mt-1 text-[11px] text-emerald-600 font-medium">Active roster</div>
+            </div>
+
+            <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-blue-300 transition-all duration-200 cursor-default group">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>Faculty Members</span>
+                <GraduationCap className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
+              </div>
+              <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-blue-900 transition-colors">
+                {analytics.totalTeachers}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">Across {departments.length} departments</div>
+            </div>
+
+            <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-indigo-300 transition-all duration-200 cursor-default group">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>Total Courses</span>
+                <BookOpen className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
+              </div>
+              <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-indigo-900 transition-colors">
+                {analytics.totalCourses}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">Active curriculum</div>
+            </div>
+
+            <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-purple-300 transition-all duration-200 cursor-default group">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>Registrations</span>
+                <Layers className="w-3.5 h-3.5 text-slate-400 group-hover:text-purple-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
+              </div>
+              <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-purple-900 transition-colors">
+                {analytics.totalEnrollments}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">Course seatings</div>
+            </div>
+
+            <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-emerald-300 transition-all duration-200 cursor-default group">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>Avg Attendance</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
+              </div>
+              <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-emerald-900 transition-colors">
+                {analytics.averageAttendanceRate}%
+              </div>
+              <div className="mt-1 text-[11px] text-emerald-600 font-medium">&gt; 75% threshold</div>
+            </div>
+
+            <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-amber-300 transition-all duration-200 cursor-default group">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>Avg Univ GPA</span>
+                <Award className="w-3.5 h-3.5 text-slate-400 group-hover:text-amber-600 group-hover:scale-110 group-hover:rotate-6 transition-all duration-200" />
+              </div>
+              <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-amber-900 transition-colors">
+                {analytics.averageGpa.toFixed(2)}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">Scale of 4.00</div>
+            </div>
+          </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in-up">
           {/* Grade Distribution Bar Visualizer */}
           <div className="lg:col-span-2 p-5 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-4 hover:border-slate-300 transition-colors">
@@ -557,51 +646,280 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {/* Tab 2: Semester Courses Management */}
       {currentTab === 'courses' && (
-        <div className="space-y-4 animate-fade-in-up">
-          {/* Controls Bar: Semester Filter & Search */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-slate-600">Filter Semester:</span>
-              <select
-                value={selectedSemesterFilter}
-                onChange={(e) => setSelectedSemesterFilter(e.target.value)}
-                className="text-xs font-semibold bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors"
-              >
-                <option value="all">All Semesters</option>
-                {semesters.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} (Semester {s.number})
-                  </option>
-                ))}
-                <option value="1">Semester 1</option>
-                <option value="2">Semester 2</option>
-                <option value="3">Semester 3</option>
-                <option value="4">Semester 4</option>
-                <option value="5">Semester 5</option>
-                <option value="6">Semester 6</option>
-                <option value="7">Semester 7</option>
-                <option value="8">Semester 8</option>
-              </select>
-            </div>
-
-            <div className="relative flex-1 sm:max-w-xs">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-              <input
-                type="text"
-                placeholder="Search code, title, teacher..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors"
-              />
+        <div className="space-y-6 animate-fade-in-up">
+          {/* Page Top Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+                  Courses & Semesters
+                </h1>
+                <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full font-mono">
+                  {semesters.length} Semesters · {courses.length} Courses
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Semester curriculum scheduling, credit hours, classroom venues, and faculty instructor assignments.
+              </p>
             </div>
           </div>
 
-          {/* High-Density Data Grid of Courses */}
+          {/* Section 1: Academic Semesters Directory & Management */}
           <div className="bg-white rounded-lg border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-indigo-600" />
+                    <span>Academic Semesters Directory</span>
+                  </h3>
+                  <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full font-mono">
+                    {semesters.length} of 8 Semesters Configured
+                  </span>
+                  {isMaxSemestersReached && (
+                    <span className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-mono">
+                      All 8 Semesters Configured
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Manage academic terms, term dates, and registration windows (Semester 1 through Semester 8).
+                </p>
+              </div>
+
+              <div>
+                {isMaxSemestersReached ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 rounded-md cursor-not-allowed flex items-center gap-1.5 opacity-60 self-start sm:self-auto"
+                    title="Maximum limit of 8 semesters reached"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                    <span>New Semester (Max 8 Reached)</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={openAddSemester}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-all duration-150 shadow-2xs hover:scale-[1.02] active:scale-95 whitespace-nowrap cursor-pointer flex items-center gap-1.5 self-start sm:self-auto"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Add Semester</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                    <th className="py-2.5 px-4 text-center">Semester #</th>
+                    <th className="py-2.5 px-4">Term Name</th>
+                    <th className="py-2.5 px-4">Term Code</th>
+                    <th className="py-2.5 px-4">Academic Duration</th>
+                    <th className="py-2.5 px-4 text-center">Registration Window</th>
+                    <th className="py-2.5 px-4 text-center">Current Term</th>
+                    <th className="py-2.5 px-4 text-center">Courses Offered</th>
+                    <th className="py-2.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sortedSemesters.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-slate-400">
+                        No semesters configured. Click "+ Add Semester" to get started.
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedSemesters.map((sem) => {
+                      const semCourses = courses.filter((c) => c.semesterId === sem.id || c.semesterNumber === sem.number);
+                      return (
+                        <tr key={sem.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
+                          <td className="py-2.5 px-4 text-center">
+                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-100 text-slate-900 font-bold font-mono text-xs group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                              {sem.number}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-4">
+                            <div className="font-semibold text-slate-900">{sem.name}</div>
+                          </td>
+                          <td className="py-2.5 px-4">
+                            <span className="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-200">
+                              {sem.code}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-600 font-mono text-[11px]">
+                            {sem.startDate} &rarr; {sem.endDate}
+                          </td>
+                          <td className="py-2.5 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => toggleSemesterRegistration(sem.id)}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+                                sem.isRegistrationOpen
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                                  : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100'
+                              }`}
+                              title="Click to toggle registration window"
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${sem.isRegistrationOpen ? 'bg-emerald-600 animate-pulse' : 'bg-rose-600'}`} />
+                              <span>{sem.isRegistrationOpen ? 'Open (Toggle)' : 'Closed (Toggle)'}</span>
+                            </button>
+                          </td>
+                          <td className="py-2.5 px-4 text-center">
+                            {sem.isCurrent ? (
+                              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full font-bold text-[10px]">
+                                Active Current
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => updateSemester(sem.id, { isCurrent: true })}
+                                className="text-[11px] text-slate-400 hover:text-indigo-600 hover:underline cursor-pointer"
+                                title="Set as current active semester"
+                              >
+                                Set Current
+                              </button>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-4 text-center font-mono font-semibold text-slate-700">
+                            {semCourses.length} {semCourses.length === 1 ? 'course' : 'courses'}
+                          </td>
+                          <td className="py-2.5 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openEditSemester(sem)}
+                                className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors cursor-pointer"
+                                title="Edit semester"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSemesterToDelete(sem)}
+                                className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
+                                title="Delete semester"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Section 2: Academic Courses Directory & Curriculum Table */}
+          <div className="bg-white rounded-lg border border-slate-200 shadow-2xs overflow-hidden">
+            {/* Header matching Semesters Directory Section */}
+            <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-indigo-600" />
+                    <span>Academic Courses Directory</span>
+                  </h3>
+                  <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full font-mono">
+                    {filteredCourses.length !== courses.length
+                      ? `${filteredCourses.length} of ${courses.length} Courses Filtered`
+                      : `${courses.length} Courses Configured`}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Manage curriculum courses, credit hours, classroom venues, and appointed faculty instructors across configured semesters.
+                </p>
+              </div>
+
+              <div>
+                {sortedSemesters.length === 0 ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 rounded-md cursor-not-allowed flex items-center gap-1.5 opacity-60 self-start sm:self-auto"
+                    title="Please create at least one semester in the directory first"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Add Course (Semester Required)</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={openAddCourse}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-all duration-150 shadow-2xs hover:scale-[1.02] active:scale-95 whitespace-nowrap cursor-pointer flex items-center gap-1.5 self-start sm:self-auto"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Add Course</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filter Bar: Filter Semester (strictly synced with created semesters) & Search */}
+            <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-medium text-slate-600">Filter Semester:</span>
+                <select
+                  value={selectedSemesterFilter}
+                  onChange={(e) => setSelectedSemesterFilter(e.target.value)}
+                  className="text-xs font-semibold bg-white border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors cursor-pointer"
+                >
+                  <option value="all">All Configured Semesters ({courses.length})</option>
+                  {sortedSemesters.map((s) => {
+                    const semCount = courses.filter((c) => c.semesterId === s.id || c.semesterNumber === s.number).length;
+                    return (
+                      <option key={s.id} value={s.id}>
+                        {s.name} (Semester {s.number}) - {semCount} {semCount === 1 ? 'course' : 'courses'}
+                      </option>
+                    );
+                  })}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => toggleSemesterRegistration(currentSemester.id)}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md border transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                    currentSemester.isRegistrationOpen
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
+                      : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 hover:border-rose-300'
+                  }`}
+                  title="Toggle semester registration window open/closed"
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      currentSemester.isRegistrationOpen ? 'bg-emerald-600 animate-pulse' : 'bg-rose-600'
+                    }`}
+                  />
+                  <span>
+                    {currentSemester.name}: {currentSemester.isRegistrationOpen ? 'Registration Open' : 'Registration Closed'}
+                  </span>
+                </button>
+              </div>
+
+              <div className="relative flex-1 sm:max-w-xs">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search code, title, teacher..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Courses Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
@@ -625,7 +943,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </tr>
                   ) : (
                     filteredCourses.map((c) => {
-                      const sem = semesters.find((s) => s.id === c.semesterId);
+                      const sem = sortedSemesters.find((s) => s.id === c.semesterId) || sortedSemesters.find((s) => s.number === c.semesterNumber);
                       return (
                         <tr key={c.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
                           <td className="py-3 px-4 font-bold text-slate-900 font-mono group-hover:text-indigo-600 transition-colors">
@@ -638,8 +956,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             </div>
                           </td>
                           <td className="py-3 px-4 text-slate-700">
-                            <div>Sem {c.semesterNumber}</div>
-                            <div className="text-[11px] text-slate-400">{sem ? sem.name : 'Active'}</div>
+                            <div className="font-semibold text-slate-900">Semester {sem ? sem.number : c.semesterNumber}</div>
+                            <div className="text-[11px] text-slate-400 font-medium">{sem ? sem.name : 'Unassigned Term'}</div>
                           </td>
                           <td className="py-3 px-4 text-center font-mono font-semibold text-slate-800">
                             {c.creditHours} Cr
@@ -719,6 +1037,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
             {teachers.map((t) => {
               const assigned = courses.filter((c) => c.teacherId === t.id);
+              const facultyHodBadge = getFacultyHodBadge(t.id, departments);
+              const teacherDepts = t.departments && t.departments.length > 0 ? t.departments : [t.department];
+
               return (
                 <div
                   key={t.id}
@@ -737,13 +1058,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <h4 className="text-xs font-bold text-slate-900 group-hover:text-blue-900 transition-colors">{t.name}</h4>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h4 className="text-xs font-bold text-slate-900 group-hover:text-blue-900 transition-colors">{t.name}</h4>
+                          {facultyHodBadge && (
+                            <span className="text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.2 rounded font-mono shadow-2xs">
+                              👑 {facultyHodBadge}
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] font-semibold uppercase text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
                           {t.designation || 'Faculty'}
                         </span>
                       </div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">{t.department}</div>
-                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">{t.email}</div>
+                      {/* Department badges */}
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {teacherDepts.map((dName) => (
+                          <span
+                            key={dName}
+                            className="text-[10px] font-medium text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded font-sans"
+                          >
+                            {dName}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono mt-1">{t.email}</div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
                         DOB: {t.dob || '1980-01-01'} · Phone: {t.phone || 'N/A'}
                       </div>
@@ -859,29 +1197,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {students.map((s) => (
-                  <tr key={s.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
-                    <td className="py-3 px-3 font-mono">
-                      <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded font-bold text-slate-900 group-hover:bg-indigo-50 group-hover:border-indigo-300 group-hover:text-indigo-700 transition-colors">
-                        {formatStudentRollNumber(s.session || s.sessionYear, s.department, s.rollNumber)}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3">
-                      <div className="flex items-center gap-2">
-                        <img
-                          src={
-                            s.avatar ||
-                            `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                              s.name
-                            )}&background=0F172A&color=fff`
-                          }
-                          alt={s.name}
-                          className="w-6 h-6 rounded-full object-cover border border-slate-200"
-                        />
-                        <span className="font-semibold text-slate-900">{s.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 text-slate-700">BS {s.department}</td>
+                {students.map((s) => {
+                  const studentDept = getUserPrimaryDepartment(s);
+                  return (
+                    <tr key={s.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
+                      <td className="py-3 px-3 font-mono">
+                        <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded font-bold text-slate-900 group-hover:bg-indigo-50 group-hover:border-indigo-300 group-hover:text-indigo-700 transition-colors">
+                          {formatStudentRollNumber(s.session || s.sessionYear, studentDept, s.rollNumber)}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={
+                              s.avatar ||
+                              `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                                s.name
+                              )}&background=0F172A&color=fff`
+                            }
+                            alt={s.name}
+                            className="w-6 h-6 rounded-full object-cover border border-slate-200"
+                          />
+                          <span className="font-semibold text-slate-900">{s.name}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-700">BS {studentDept}</td>
                     <td className="py-3 px-2 text-center font-mono font-semibold text-indigo-700">
                       <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded text-[11px]">
                         {s.session || s.sessionYear || 2026}
@@ -927,7 +1267,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </div>
                     </td>
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
@@ -977,8 +1318,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {/* Department Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredDepartments.map((dept) => {
-              const deptFaculty = teachers.filter((t) => t.department === dept.name);
-              const deptStudents = students.filter((s) => s.department === dept.name);
+              const deptFaculty = teachers.filter((t) => isTeacherInDept(t, dept.name));
+              const deptStudents = students.filter((s) => (s.departments && s.departments.length > 0 ? s.departments.includes(dept.name) : s.department === dept.name));
               const deptCourses = courses.filter((c) => c.department === dept.name);
               const hodTeacher = teachers.find((t) => t.id === dept.hodId);
 
@@ -1201,67 +1542,69 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Target Academic Semester
+                    Target Academic Semester <span className="text-rose-500">*</span>
                   </label>
-                  <select
-                    value={formSemesterId}
-                    onChange={(e) => {
-                      setFormSemesterId(e.target.value);
-                      const matched = semesters.find((s) => s.id === e.target.value);
-                      if (matched) setFormSemesterNumber(matched.number);
-                    }}
-                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500"
-                  >
-                    {semesters.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} (Semester {s.number})
-                      </option>
-                    ))}
-                  </select>
+                  {sortedSemesters.length === 0 ? (
+                    <div className="p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800">
+                      No semesters configured. Please add a semester in the directory first.
+                    </div>
+                  ) : (
+                    <select
+                      value={formSemesterId}
+                      onChange={(e) => {
+                        setFormSemesterId(e.target.value);
+                        const matched = sortedSemesters.find((s) => s.id === e.target.value);
+                        if (matched) setFormSemesterNumber(matched.number);
+                      }}
+                      className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 cursor-pointer font-medium"
+                    >
+                      {sortedSemesters.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} (Semester {s.number}) {s.isCurrent ? '— Current' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Semester Number (1 to 8)
+                    Semester Number (Synced)
                   </label>
                   <input
                     type="number"
-                    min={1}
-                    max={8}
-                    required
+                    readOnly
+                    disabled
                     value={formSemesterNumber}
-                    onChange={(e) => setFormSemesterNumber(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-mono"
+                    className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-300 rounded-md font-mono text-slate-700 cursor-not-allowed select-none"
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Automatically assigned from the chosen Academic Semester in the directory.
+                  </p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* 1. Academic Department FIRST */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Assign Faculty Instructor
-                  </label>
-                  <select
-                    value={formTeacherId}
-                    onChange={(e) => setFormTeacherId(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-medium text-slate-900"
-                  >
-                    {teachers.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} ({t.department})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Academic Department
+                    Academic Department <span className="text-rose-500">*</span>
                   </label>
                   <select
                     value={formDepartment}
-                    onChange={(e) => setFormDepartment(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-medium"
+                    onChange={(e) => {
+                      const newDept = e.target.value;
+                      setFormDepartment(newDept);
+                      const eligible = teachers.filter((t) => isTeacherInDept(t, newDept));
+                      if (eligible.length > 0) {
+                        if (!eligible.some((t) => t.id === formTeacherId)) {
+                          setFormTeacherId(eligible[0].id);
+                        }
+                      } else {
+                        setFormTeacherId('');
+                      }
+                    }}
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-medium text-slate-900 focus:bg-white focus:ring-1 focus:ring-indigo-500"
                   >
                     {departments.map((d) => (
                       <option key={d.id} value={d.name}>
@@ -1269,6 +1612,54 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </option>
                     ))}
                   </select>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Instructors below are filtered strictly to this department.
+                  </span>
+                </div>
+
+                {/* 2. Assign Faculty Instructor SECOND (Filtered by selected department only) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-700">
+                      Assign Faculty Instructor <span className="text-rose-500">*</span>
+                    </label>
+                    <span className="text-[10px] font-mono font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-200">
+                      {eligibleTeachersForCourse.length} Available
+                    </span>
+                  </div>
+                  <select
+                    value={formTeacherId}
+                    onChange={(e) => setFormTeacherId(e.target.value)}
+                    required
+                    className={`w-full px-3 py-1.5 text-xs bg-slate-50 border rounded-md font-medium text-slate-900 focus:bg-white focus:ring-1 ${
+                      eligibleTeachersForCourse.length === 0
+                        ? 'border-amber-300 bg-amber-50/40 text-amber-900'
+                        : 'border-slate-300 focus:ring-indigo-500'
+                    }`}
+                  >
+                    {eligibleTeachersForCourse.length > 0 ? (
+                      eligibleTeachersForCourse.map((t) => {
+                        const badge = getFacultyHodBadge(t.id, departments);
+                        return (
+                          <option key={t.id} value={t.id}>
+                            {t.name} {badge ? `[👑 ${badge}]` : ''} ({t.designation || 'Faculty'})
+                          </option>
+                        );
+                      })
+                    ) : (
+                      <option value="" disabled>
+                        -- No faculty assigned to {formDepartment} --
+                      </option>
+                    )}
+                  </select>
+                  {eligibleTeachersForCourse.length === 0 && (
+                    <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900 flex items-start gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <span>
+                        No faculty members currently appointed to <strong>{formDepartment}</strong>. Please appoint a faculty member to this department in the Faculty tab.
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1350,63 +1741,85 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       )}
 
-      {/* Modal: New Semester */}
+      {/* Modal: Add / Edit Semester */}
       {isAddSemesterOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
           <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider">
-                Create New Academic Semester
+              <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-indigo-400" />
+                <span>{editingSemester ? 'Edit Academic Semester' : 'Create New Academic Semester'}</span>
               </h3>
               <button
-                onClick={() => setIsAddSemesterOpen(false)}
-                className="text-slate-400 hover:text-white text-xs"
+                type="button"
+                onClick={() => {
+                  setIsAddSemesterOpen(false);
+                  setEditingSemester(null);
+                  setSemesterError(null);
+                }}
+                className="text-slate-400 hover:text-white text-xs cursor-pointer"
               >
-                Cancel
+                ✕
               </button>
             </div>
 
-            <form onSubmit={handleCreateSemester} className="p-5 space-y-4">
+            <form onSubmit={handleSaveSemester} className="p-5 space-y-4">
+              {semesterError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{semesterError}</span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Semester Term Name (e.g. Spring 2027)
+                  Semester Term Name (e.g. Fall 2026) <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
-                  value={newSemName}
-                  onChange={(e) => setNewSemName(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md"
+                  value={semFormName}
+                  onChange={(e) => setSemFormName(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                  placeholder="e.g. Fall 2026"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Semester Code
+                    Semester Code <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
                     required
-                    value={newSemCode}
-                    onChange={(e) => setNewSemCode(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-mono"
-                    placeholder="SP27"
+                    value={semFormCode}
+                    onChange={(e) => setSemFormCode(e.target.value)}
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-mono focus:bg-white focus:ring-1 focus:ring-indigo-500 uppercase"
+                    placeholder="FA26"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Semester Number (1-8)
+                    Semester Number (1-8) <span className="text-rose-500">*</span>
                   </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={8}
-                    required
-                    value={newSemNumber}
-                    onChange={(e) => setNewSemNumber(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-mono"
-                  />
+                  <select
+                    value={semFormNumber}
+                    onChange={(e) => setSemFormNumber(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-mono focus:bg-white focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => {
+                      const otherSem = semesters.find(
+                        (s) => (!editingSemester || s.id !== editingSemester.id) && s.number === num
+                      );
+                      const isTaken = Boolean(otherSem);
+                      return (
+                        <option key={num} value={num} disabled={isTaken}>
+                          Semester {num} {isTaken ? `(Exists: ${otherSem?.name})` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
               </div>
 
@@ -1418,8 +1831,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <input
                     type="date"
                     required
-                    value={newSemStart}
-                    onChange={(e) => setNewSemStart(e.target.value)}
+                    value={semFormStart}
+                    onChange={(e) => setSemFormStart(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md"
                   />
                 </div>
@@ -1430,29 +1843,109 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <input
                     type="date"
                     required
-                    value={newSemEnd}
-                    onChange={(e) => setNewSemEnd(e.target.value)}
+                    value={semFormEnd}
+                    onChange={(e) => setSemFormEnd(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md"
                   />
                 </div>
               </div>
 
+              <div className="pt-2 border-t border-slate-100 space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={semFormRegOpen}
+                    onChange={(e) => setSemFormRegOpen(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="font-medium">Open Student Course Registration Window</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={semFormIsCurrent}
+                    onChange={(e) => setSemFormIsCurrent(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="font-medium">Set as Current University Active Semester</span>
+                </label>
+              </div>
+
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsAddSemesterOpen(false)}
-                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800"
+                  onClick={() => {
+                    setIsAddSemesterOpen(false);
+                    setEditingSemester(null);
+                    setSemesterError(null);
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md shadow-xs"
+                  className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md shadow-xs cursor-pointer hover:scale-[1.02] active:scale-95 transition-all"
                 >
-                  Create Semester
+                  {editingSemester ? 'Save Changes' : 'Create Semester'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Delete Semester Confirmation */}
+      {semesterToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
+          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="p-5">
+              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mb-3">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                Delete Academic Semester?
+              </h3>
+              <p className="text-xs text-slate-600 mt-2">
+                Are you sure you want to permanently delete <strong>{semesterToDelete.name}</strong> (Semester {semesterToDelete.number})?
+              </p>
+
+              {courses.filter((c) => c.semesterId === semesterToDelete.id || c.semesterNumber === semesterToDelete.number).length > 0 && (
+                <div className="mt-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>
+                    Warning: <strong>{courses.filter((c) => c.semesterId === semesterToDelete.id || c.semesterNumber === semesterToDelete.number).length} courses</strong> are currently associated with this semester. Deleting the semester will unassign them.
+                  </span>
+                </div>
+              )}
+
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={isDeletingSemester}
+                  onClick={() => setSemesterToDelete(null)}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingSemester}
+                  onClick={handleConfirmDeleteSemester}
+                  className="px-4 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-md shadow-xs cursor-pointer hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-1.5"
+                >
+                  {isDeletingSemester ? (
+                    <span>Deleting...</span>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Semester</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1486,13 +1979,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <span className="text-slate-400">Email:</span> {userToDelete.email}
                     </div>
                     <div>
-                      <span className="text-slate-400">Department:</span> {userToDelete.department}
+                      <span className="text-slate-400">Department:</span> {getUserPrimaryDepartment(userToDelete)}
                     </div>
                     {userToDelete.role === 'student' && (
                       <div>
                         <span className="text-slate-400">Roll:</span>{' '}
                         <span className="font-bold text-indigo-700">
-                          {formatStudentRollNumber(userToDelete.session || userToDelete.sessionYear, userToDelete.department, userToDelete.rollNumber)}
+                          {formatStudentRollNumber(userToDelete.session || userToDelete.sessionYear, getUserPrimaryDepartment(userToDelete), userToDelete.rollNumber)}
                         </span> ·{' '}
                         <span className="text-slate-400">Session:</span> {userToDelete.session || 2026} ·{' '}
                         <span className="text-slate-400">Semester:</span> {userToDelete.semester || 1}
@@ -1571,10 +2064,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </p>
                   <div className="mt-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded text-[11px] font-mono text-slate-700 space-y-1">
                     <div>
-                      <span className="text-slate-400">Assigned Faculty:</span> {teachers.filter((t) => t.department === departmentToDelete.name).length}
+                      <span className="text-slate-400">Assigned Faculty:</span> {teachers.filter((t) => isTeacherInDept(t, departmentToDelete.name)).length}
                     </div>
                     <div>
-                      <span className="text-slate-400">Enrolled Students:</span> {students.filter((s) => s.department === departmentToDelete.name).length}
+                      <span className="text-slate-400">Enrolled Students:</span> {students.filter((s) => (s.departments && s.departments.length > 0 ? s.departments.includes(departmentToDelete.name) : s.department === departmentToDelete.name)).length}
                     </div>
                     <div>
                       <span className="text-slate-400">Offered Courses:</span> {courses.filter((c) => c.department === departmentToDelete.name).length}

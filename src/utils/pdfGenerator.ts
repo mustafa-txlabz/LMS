@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { User, Course, StudentMarks } from '../types';
-import { formatStudentRollNumber } from './studentEmail';
+import { formatStudentRollNumber, getUserPrimaryDepartment } from './studentEmail';
 
 export interface StudentGradeRow {
   course: Course;
@@ -92,14 +92,14 @@ export function generateAcademicTranscriptPDF(
   doc.text('University Roll No:', 14, detailsY + 6);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
-  doc.text(formatStudentRollNumber(student.session || student.sessionYear, student.department, student.rollNumber), 48, detailsY + 6);
+  doc.text(formatStudentRollNumber(student.session || student.sessionYear, getUserPrimaryDepartment(student), student.rollNumber), 48, detailsY + 6);
 
   doc.setTextColor(71, 85, 105);
   doc.setFont('helvetica', 'bold');
   doc.text('Academic Program:', 14, detailsY + 12);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
-  doc.text(`Bachelor of Science in ${student.department}`, 48, detailsY + 12);
+  doc.text(`Bachelor of Science in ${getUserPrimaryDepartment(student)}`, 48, detailsY + 12);
 
   // Right column
   const rightColX = pageWidth / 2 + 10;
@@ -358,7 +358,7 @@ export function generateAttendanceReportPDF(
   doc.text('Roll Number:', 14, detailsY + 6);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
-  doc.text(formatStudentRollNumber(student.session || student.sessionYear, student.department, student.rollNumber), 44, detailsY + 6);
+  doc.text(formatStudentRollNumber(student.session || student.sessionYear, getUserPrimaryDepartment(student), student.rollNumber), 44, detailsY + 6);
 
   const rightColX = pageWidth / 2 + 10;
   doc.setTextColor(71, 85, 105);
@@ -366,7 +366,7 @@ export function generateAttendanceReportPDF(
   doc.text('Department:', rightColX, detailsY);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
-  doc.text(student.department, rightColX + 28, detailsY);
+  doc.text(getUserPrimaryDepartment(student), rightColX + 28, detailsY);
 
   doc.setTextColor(71, 85, 105);
   doc.setFont('helvetica', 'bold');

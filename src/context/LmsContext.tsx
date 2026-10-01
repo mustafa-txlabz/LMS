@@ -65,7 +65,9 @@ interface LmsContextType {
   updateCourse: (courseId: string, updates: Partial<Course>) => void;
   deleteCourse: (courseId: string) => void;
   toggleSemesterRegistration: (semesterId: string) => void;
-  addSemester: (semData: Omit<Semester, 'id'>) => void;
+  addSemester: (semData: Omit<Semester, 'id'>) => Promise<{ success: boolean; error?: string; semester?: Semester }>;
+  updateSemester: (semesterId: string, updates: Partial<Semester>) => Promise<{ success: boolean; error?: string; semester?: Semester }>;
+  deleteSemester: (semesterId: string) => Promise<{ success: boolean; error?: string }>;
 
   // Registration (Student / Admin)
   registerCourse: (studentId: string, courseId: string) => { success: boolean; message: string };
@@ -181,14 +183,32 @@ export function calculateGradeDetails(
 export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'users');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
+    const raw = saved ? JSON.parse(saved) : INITIAL_USERS;
+    return raw.map((u: any) => {
+      const depts = Array.isArray(u.departments) && u.departments.length > 0
+        ? u.departments
+        : (u.department ? [u.department] : ['Computer Science']);
+      return {
+        ...u,
+        departments: depts,
+        department: depts[0],
+      };
+    });
   });
 
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'auth_user');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const u = JSON.parse(saved);
+        const depts = Array.isArray(u.departments) && u.departments.length > 0
+          ? u.departments
+          : (u.department ? [u.department] : ['Computer Science']);
+        return {
+          ...u,
+          departments: depts,
+          department: depts[0],
+        };
       } catch {
         return null;
       }
@@ -240,7 +260,17 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data && data.users && data.users.length > 0) {
-          setUsers(data.users);
+          const sanitizedUsers: User[] = data.users.map((u: any) => {
+            const depts = Array.isArray(u.departments) && u.departments.length > 0
+              ? u.departments
+              : (u.department ? [u.department] : ['Computer Science']);
+            return {
+              ...u,
+              departments: depts,
+              department: depts[0],
+            };
+          });
+          setUsers(sanitizedUsers);
           setSemesters(data.semesters);
           setCourses(data.courses);
           setEnrollments(data.enrollments);
@@ -253,7 +283,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
           // Update current user reference if logged in
           if (currentUser) {
-            const matched = data.users.find((u: User) => u.id === currentUser.id);
+            const matched = sanitizedUsers.find((u: User) => u.id === currentUser.id);
             if (matched) {
               setCurrentUser(matched);
             }
@@ -534,13 +564,18 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Admin: Add Student or Teacher
   const adminAddUser = async (userData: Partial<User>): Promise<{ success: boolean; error?: string }> => {
+    const assignedDepts: string[] = Array.isArray(userData.departments) && userData.departments.length > 0
+      ? userData.departments
+      : userData.department ? [userData.department] : ['Computer Science'];
+
     const newUser: User = {
       id: `usr-${userData.role || 'user'}-${Date.now()}`,
       name: userData.name || '',
       email: userData.email || '',
       password: userData.password || 'password123',
       role: userData.role || 'student',
-      department: userData.department || 'Computer Science',
+      department: assignedDepts[0] || userData.department || 'Computer Science',
+      departments: assignedDepts,
       rollNumber: userData.role === 'student' ? userData.rollNumber || '1' : undefined,
       session: userData.role === 'student' ? Number(userData.session) || 2026 : undefined,
       sessionYear: userData.role === 'student' ? Number(userData.session) || 2026 : undefined,
@@ -555,11 +590,17 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name || 'User')}&background=0F172A&color=fff`,
     };
 
+    const userPayload: any = {
+      ...userData,
+      departments: assignedDepts,
+    };
+    delete userPayload.department;
+
     try {
       await fetch('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userData),
+        body: JSON.stringify(userPayload),
       });
     } catch {
       // Continue locally
@@ -684,7 +725,16 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const oldDept = departments.find((d) => d.id === id);
         if (oldDept && oldDept.name !== updates.name) {
           setUsers((prev) =>
-            prev.map((u) => (u.department === oldDept.name ? { ...u, department: updates.name! } : u))
+            prev.map((u) => {
+              const depts = (u.departments || [u.department || '']).map((d) =>
+                d === oldDept.name ? updates.name! : d
+              );
+              return {
+                ...u,
+                departments: depts,
+                department: depts[0],
+              };
+            })
           );
           setCourses((prev) =>
             prev.map((c) => (c.department === oldDept.name ? { ...c, department: updates.name! } : c))
@@ -793,12 +843,106 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Add Semester
-  const addSemester = (semData: Omit<Semester, 'id'>) => {
-    const newSem: Semester = {
-      ...semData,
-      id: `sem-${Date.now()}`,
-    };
-    setSemesters((prev) => [newSem, ...prev]);
+  const addSemester = async (
+    semData: Omit<Semester, 'id'>
+  ): Promise<{ success: boolean; error?: string; semester?: Semester }> => {
+    if (semesters.length >= 8) {
+      return { success: false, error: 'Maximum limit of 8 semesters reached.' };
+    }
+    const num = Number(semData.number);
+    if (semesters.some((s) => s.number === num)) {
+      return { success: false, error: `Semester ${num} already exists in the system.` };
+    }
+
+    try {
+      const res = await fetch('/api/admin/semesters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(semData),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Failed to create semester' };
+      }
+      const created = data.semester;
+      setSemesters((prev) => {
+        const updated = semData.isCurrent ? prev.map((s) => ({ ...s, isCurrent: false })) : [...prev];
+        return [created, ...updated];
+      });
+      return { success: true, semester: created };
+    } catch {
+      // Local fallback
+      const newSem: Semester = {
+        ...semData,
+        number: num,
+        id: `sem-${Date.now()}`,
+      };
+      setSemesters((prev) => {
+        const updated = semData.isCurrent ? prev.map((s) => ({ ...s, isCurrent: false })) : [...prev];
+        return [newSem, ...updated];
+      });
+      return { success: true, semester: newSem };
+    }
+  };
+
+  // Update Semester
+  const updateSemester = async (
+    semesterId: string,
+    updates: Partial<Semester>
+  ): Promise<{ success: boolean; error?: string; semester?: Semester }> => {
+    if (updates.number !== undefined) {
+      const num = Number(updates.number);
+      if (semesters.some((s) => s.id !== semesterId && s.number === num)) {
+        return { success: false, error: `Semester ${num} is already taken by another semester.` };
+      }
+    }
+
+    try {
+      const res = await fetch(`/api/admin/semesters/${semesterId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Failed to update semester' };
+      }
+      const updated = data.semester;
+      setSemesters((prev) =>
+        prev.map((s) => {
+          if (s.id === semesterId) return updated;
+          if (updates.isCurrent) return { ...s, isCurrent: false };
+          return s;
+        })
+      );
+      return { success: true, semester: updated };
+    } catch {
+      setSemesters((prev) =>
+        prev.map((s) => {
+          if (s.id === semesterId) return { ...s, ...updates };
+          if (updates.isCurrent) return { ...s, isCurrent: false };
+          return s;
+        })
+      );
+      return { success: true };
+    }
+  };
+
+  // Delete Semester
+  const deleteSemester = async (semesterId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`/api/admin/semesters/${semesterId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Failed to delete semester' };
+      }
+    } catch {}
+
+    setSemesters((prev) => prev.filter((s) => s.id !== semesterId));
+    setCourses((prev) => prev.map((c) => (c.semesterId === semesterId ? { ...c, semesterId: '' } : c)));
+    return { success: true };
   };
 
   // Register Course
@@ -1295,8 +1439,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const deptMap: Record<string, { students: number; courses: number }> = {};
     students.forEach((s) => {
-      if (!deptMap[s.department]) deptMap[s.department] = { students: 0, courses: 0 };
-      deptMap[s.department].students++;
+      const sDept = (s.departments && s.departments[0]) || s.department || 'Computer Science';
+      if (!deptMap[sDept]) deptMap[sDept] = { students: 0, courses: 0 };
+      deptMap[sDept].students++;
     });
     courses.forEach((c) => {
       if (!deptMap[c.department]) deptMap[c.department] = { students: 0, courses: 0 };
@@ -1356,6 +1501,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteCourse,
         toggleSemesterRegistration,
         addSemester,
+        updateSemester,
+        deleteSemester,
         registerCourse,
         dropCourse,
         updateStudentGrade,

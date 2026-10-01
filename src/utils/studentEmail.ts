@@ -135,3 +135,41 @@ export const extractRollNumberDigits = (rollNumber: number | string | undefined)
   const match = str.match(/(\d+)$/);
   return match ? match[1] : str.replace(/\D/g, '');
 };
+
+/**
+ * Returns HOD badge for a faculty member if they are HOD of any department.
+ * Format: "HOD CS", "HOD ENG", etc.
+ */
+export const getFacultyHodBadge = (
+  teacherId: string,
+  departments: { hodId?: string; code: string; name: string }[]
+): string | null => {
+  if (!teacherId || !departments || departments.length === 0) return null;
+  const dept = departments.find((d) => d.hodId === teacherId);
+  if (!dept) return null;
+  return `HOD ${dept.code.toUpperCase()}`;
+};
+
+/**
+ * Returns primary department of a user from their departments array
+ */
+export const getUserPrimaryDepartment = (user?: { departments?: string[]; department?: string } | null): string => {
+  if (!user) return 'Computer Science';
+  if (Array.isArray(user.departments) && user.departments.length > 0) {
+    return user.departments[0];
+  }
+  return user.department || 'Computer Science';
+};
+
+/**
+ * Returns array of departments of a user
+ */
+export const getUserDepartments = (user?: { departments?: string[]; department?: string } | null): string[] => {
+  if (!user) return ['Computer Science'];
+  if (Array.isArray(user.departments) && user.departments.length > 0) {
+    return user.departments;
+  }
+  return user.department ? [user.department] : ['Computer Science'];
+};
+
+

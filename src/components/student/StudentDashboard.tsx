@@ -7,7 +7,7 @@ import {
   StudentGradeRow,
   StudentAttendanceRow,
 } from '../../utils/pdfGenerator';
-import { formatStudentRollNumber } from '../../utils/studentEmail';
+import { formatStudentRollNumber, getUserPrimaryDepartment } from '../../utils/studentEmail';
 import {
   BookOpen,
   Award,
@@ -71,9 +71,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   // Semester registration filter
-  const [selectedSemesterNumber, setSelectedSemesterNumber] = useState<number>(
-    currentUser.semester || 5
-  );
+  const sortedSemesters = React.useMemo(() => [...semesters].sort((a, b) => a.number - b.number), [semesters]);
+  const defaultSemNum: number =
+    currentUser.semester && sortedSemesters.some((s) => s.number === currentUser.semester)
+      ? currentUser.semester
+      : currentSemester?.number || sortedSemesters[0]?.number || 0;
+  const [selectedSemesterNumber, setSelectedSemesterNumber] = useState<number>(defaultSemNum);
   const [searchQuery, setSearchQuery] = useState('');
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -190,11 +193,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {currentUser.name}
                 </h1>
                 <span className="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                  {formatStudentRollNumber(currentUser.session || currentUser.sessionYear, currentUser.department, currentUser.rollNumber)}
+                  {formatStudentRollNumber(currentUser.session || currentUser.sessionYear, getUserPrimaryDepartment(currentUser), currentUser.rollNumber)}
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-1">
-                <span>BS {currentUser.department}</span>
+                <span>BS {getUserPrimaryDepartment(currentUser)}</span>
                 <span aria-hidden="true">·</span>
                 <span>Semester {currentUser.semester || 5}</span>
                 <span aria-hidden="true">·</span>
@@ -351,31 +354,32 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
           {/* Filter Bar: Semester selector & Search */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-slate-200">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-semibold text-slate-600">Select Semester:</span>
-              <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-md">
-                {[3, 4, 5, 6, 7].map((num) => (
+              <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-md overflow-x-auto max-w-full">
+                {sortedSemesters.map((s) => (
                   <button
-                    key={num}
-                    onClick={() => setSelectedSemesterNumber(num)}
-                    className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors ${
-                      selectedSemesterNumber === num
-                        ? 'bg-white text-slate-900 shadow-2xs'
+                    key={s.id}
+                    onClick={() => setSelectedSemesterNumber(s.number)}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors whitespace-nowrap ${
+                      selectedSemesterNumber === s.number
+                        ? 'bg-white text-slate-900 shadow-2xs font-bold'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
+                    title={s.name}
                   >
-                    Sem {num}
+                    Sem {s.number}
                   </button>
                 ))}
                 <button
                   onClick={() => setSelectedSemesterNumber(0)}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors ${
+                  className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors whitespace-nowrap ${
                     selectedSemesterNumber === 0
-                      ? 'bg-white text-slate-900 shadow-2xs'
+                      ? 'bg-white text-slate-900 shadow-2xs font-bold'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  All
+                  All ({courses.length})
                 </button>
               </div>
             </div>
