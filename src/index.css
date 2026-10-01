@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+@layer utilities {
+  /* Scrollbar Utilities */
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.4);
+    border-radius: 9999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.7);
+  }
+
+  /* Micro-interactions & compositor-only hover animations */
+  .hover-lift {
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 28px -6px rgba(15, 23, 42, 0.09), 0 8px 12px -6px rgba(15, 23, 42, 0.04);
+  }
+
+  .hover-lift-subtle {
+    transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease;
+  }
+  .hover-lift-subtle:hover {
+    transform: translateY(-1.5px);
+    box-shadow: 0 6px 16px -2px rgba(15, 23, 42, 0.07);
+  }
+
+  .hover-glow {
+    transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+  }
+  .hover-glow:hover {
+    box-shadow: 0 0 20px -3px rgba(99, 102, 241, 0.25);
+    border-color: rgba(129, 140, 248, 0.6);
+  }
+
+  /* Interactive Cards */
+  .card-interactive {
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease, background-color 0.2s ease;
+  }
+  .card-interactive:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px -4px rgba(15, 23, 42, 0.08), 0 4px 8px -2px rgba(15, 23, 42, 0.03);
+    border-color: rgba(203, 213, 225, 1);
+  }
+
+  /* Button Press states */
+  .btn-press {
+    transition: transform 0.12s ease, background-color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, filter 0.15s ease;
+  }
+  .btn-press:active {
+    transform: scale(0.96);
+  }
+
+  .btn-press-subtle {
+    transition: transform 0.12s ease, background-color 0.15s ease, color 0.15s ease;
+  }
+  .btn-press-subtle:active {
+    transform: scale(0.98);
+  }
+
+  /* Table row smooth hover with subtle left accent */
+  .table-row-hover {
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+  .table-row-hover:hover {
+    background-color: rgba(248, 250, 252, 0.95);
+  }
+
+  /* Smooth pulse & shimmer keyframes */
+  @keyframes pulseSlow {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.75; transform: scale(1.02); }
+  }
+
+  .animate-pulse-slow {
+    animation: pulseSlow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in-up {
+    animation: fadeInUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+}

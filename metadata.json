@@ -1,0 +1,6 @@
+{
+  "name": "UniCore LMS - University Academic Management System",
+  "description": "Comprehensive university learning management system featuring role-based dashboards for admins, faculty, and students, semester-wise course registration, grading breakdown, attendance tracking, PDF academic reports, and automated notification triggers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
