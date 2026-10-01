@@ -89,6 +89,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Filter & Search states
   const [selectedSemesterFilter, setSelectedSemesterFilter] = useState<string>('all');
+  const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentSearchQuery, setDepartmentSearchQuery] = useState('');
   const [internalTab, setInternalTab] = useState<'analytics' | 'courses' | 'faculty' | 'students' | 'departments'>('analytics');
@@ -399,7 +400,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsAddCourseOpen(false);
   };
 
-  // Filtered courses strictly synced with existing semesters
+  // Filtered courses strictly synced with existing semesters and department
   const filteredCourses = courses.filter((c) => {
     let matchesSemester = true;
     if (selectedSemesterFilter !== 'all') {
@@ -410,12 +411,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         matchesSemester = c.semesterId === targetSem.id || c.semesterNumber === targetSem.number;
       }
     }
+    let matchesDepartment = true;
+    if (selectedDepartmentFilter !== 'all') {
+      matchesDepartment = c.department === selectedDepartmentFilter;
+    }
     const matchesSearch =
       c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.teacherName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.department.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSemester && matchesSearch;
+    return matchesSemester && matchesDepartment && matchesSearch;
   });
 
   // Automatically reset filter if selected semester is deleted
@@ -424,6 +429,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setSelectedSemesterFilter('all');
     }
   }, [semesters, selectedSemesterFilter]);
+
+  // Automatically reset department filter if selected department is deleted
+  useEffect(() => {
+    if (selectedDepartmentFilter !== 'all' && !departments.some((d) => d.name === selectedDepartmentFilter)) {
+      setSelectedDepartmentFilter('all');
+    }
+  }, [departments, selectedDepartmentFilter]);
 
   return (
     <div className="space-y-6">
@@ -866,35 +878,73 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
-            {/* Filter Bar: Filter Semester (strictly synced with created semesters) & Search */}
-            <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-medium text-slate-600">Filter Semester:</span>
-                <select
-                  value={selectedSemesterFilter}
-                  onChange={(e) => setSelectedSemesterFilter(e.target.value)}
-                  className="text-xs font-semibold bg-white border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors cursor-pointer"
-                >
-                  <option value="all">All Configured Semesters ({courses.length})</option>
-                  {sortedSemesters.map((s) => {
-                    const semCount = courses.filter((c) => c.semesterId === s.id || c.semesterNumber === s.number).length;
-                    return (
-                      <option key={s.id} value={s.id}>
-                        {s.name} (Semester {s.number}) - {semCount} {semCount === 1 ? 'course' : 'courses'}
-                      </option>
-                    );
-                  })}
-                </select>
+            {/* Filter Bar: Filter Semester, Filter Department & Search */}
+            <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 flex-wrap flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-xs font-medium text-slate-600 whitespace-nowrap">Filter Semester:</span>
+                  <select
+                    value={selectedSemesterFilter}
+                    onChange={(e) => setSelectedSemesterFilter(e.target.value)}
+                    className="text-xs font-semibold bg-white border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors cursor-pointer"
+                  >
+                    <option value="all">All Configured Semesters ({courses.length})</option>
+                    {sortedSemesters.map((s) => {
+                      const semCount = courses.filter((c) => c.semesterId === s.id || c.semesterNumber === s.number).length;
+                      return (
+                        <option key={s.id} value={s.id}>
+                          {s.name} (Semester {s.number}) - {semCount} {semCount === 1 ? 'course' : 'courses'}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-xs font-medium text-slate-600 whitespace-nowrap">Filter Department:</span>
+                  <select
+                    value={selectedDepartmentFilter}
+                    onChange={(e) => setSelectedDepartmentFilter(e.target.value)}
+                    className="text-xs font-semibold bg-white border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors cursor-pointer"
+                  >
+                    <option value="all">All Departments ({courses.length})</option>
+                    {departments.map((d) => {
+                      const deptCount = courses.filter((c) => c.department === d.name).length;
+                      return (
+                        <option key={d.id} value={d.name}>
+                          {d.name} ({d.code.toUpperCase()}) - {deptCount} {deptCount === 1 ? 'course' : 'courses'}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                {(selectedSemesterFilter !== 'all' || selectedDepartmentFilter !== 'all' || searchQuery) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedSemesterFilter('all');
+                      setSelectedDepartmentFilter('all');
+                      setSearchQuery('');
+                    }}
+                    className="text-[11px] font-semibold text-rose-600 hover:text-rose-800 hover:underline px-1.5 py-1 cursor-pointer transition-colors shrink-0"
+                    title="Reset course filters"
+                  >
+                    Reset
+                  </button>
+                )}
+
+                <div className="hidden sm:block h-4 w-px bg-slate-300 mx-1 shrink-0" />
 
                 <button
                   type="button"
                   onClick={() => toggleSemesterRegistration(currentSemester.id)}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-md border transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md border transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 shrink-0 ${
                     currentSemester.isRegistrationOpen
                       ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
                       : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 hover:border-rose-300'
                   }`}
-                  title="Toggle semester registration window open/closed"
+                  title="Toggle semester registration window open/closed for active current term"
                 >
                   <span
                     className={`w-2 h-2 rounded-full ${
@@ -907,15 +957,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
               </div>
 
-              <div className="relative flex-1 sm:max-w-xs">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+              {/* Search Box with non-collapsible minimum width */}
+              <div className="relative w-full sm:w-72 shrink-0 min-w-[200px]">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Search code, title, teacher..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors"
+                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                    title="Clear search"
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             </div>
 
@@ -938,7 +999,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {filteredCourses.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-8 text-center text-slate-400">
-                        No courses found matching criteria.
+                        <div>No courses found matching selected filters or search query.</div>
+                        {(selectedSemesterFilter !== 'all' || selectedDepartmentFilter !== 'all' || searchQuery) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSemesterFilter('all');
+                              setSelectedDepartmentFilter('all');
+                              setSearchQuery('');
+                            }}
+                            className="mt-2 text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline cursor-pointer"
+                          >
+                            Clear all filters
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ) : (

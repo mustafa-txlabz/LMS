@@ -1,0 +1,272 @@
+================================================================================
+                    UNICORE LMS - COMPREHENSIVE USER MANUAL
+================================================================================
+Version: 1.0 (Production Release)
+Target Audience: University Administrators, Registrars, Faculty Staff, Students
+System: UniCore Enterprise University Learning & Academic Management System
+================================================================================
+
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. SYSTEM OVERVIEW & USER ROLES
+2. ADMIN DASHBOARD & ACADEMIC MANAGEMENT
+   2.1 Academic Semesters Directory
+   2.2 Understanding the Toggle Buttons:
+       - "Registration Window" (Open / Closed)
+       - "Current Term" (Active Current / Set Current)
+       - "Fall 2026: Registration Open" Master Shortcut Button
+   2.3 Academic Courses Directory & Filtering:
+       - Filter Semester
+       - Filter Department
+       - Search Box & Reset Filters
+       - Adding & Editing Courses
+   2.4 Academic Departments Directory & Degree Programs
+   2.5 Faculty & Student Rosters
+3. FACULTY / TEACHER PORTAL MANUAL
+   3.1 Course Switcher & Course Overview
+   3.2 Recording Marks & Academic Evaluations
+   3.3 Attendance Sheets & Automated Notifications
+4. STUDENT PORTAL MANUAL
+   4.1 Semester Registration & Add/Drop Guidelines
+   4.2 Attendance, Lecture Schedule, & Announcements
+   4.3 Academic Transcript, Grades & CGPA Breakdown
+5. FREQUENTLY ASKED QUESTIONS (FAQ) & TROUBLESHOOTING
+
+================================================================================
+1. SYSTEM OVERVIEW & USER ROLES
+================================================================================
+UniCore LMS is a unified academic administration platform built for higher 
+education institutions. It provides real-time governance over degree programs, 
+course catalogs, term schedules, student candidate enrollment, grading schemes, 
+and attendance.
+
+The system supports three distinct roles:
+1. Administrator (Registrar / Dean): Full governance over academic semesters, 
+   curriculum courses, university departments, faculty assignments, student 
+   admissions, domain migrations, and security credentials.
+2. Faculty (Professor / Lecturer): Manages assigned course sections, evaluates 
+   quizzes/midterm/final examinations, marks attendance, and broadcasts lecture 
+   announcements.
+3. Student: Browses active courses, registers during open enrollment windows, 
+   monitors attendance percentages, reviews grades, and tracks overall CGPA.
+
+================================================================================
+2. ADMIN DASHBOARD & ACADEMIC MANAGEMENT
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1 ACADEMIC SEMESTERS DIRECTORY
+--------------------------------------------------------------------------------
+Located in the "Courses & Semesters" tab of the Admin Dashboard.
+The system supports up to 8 configured semesters (e.g., Semester 1 through 
+Semester 8), representing standard four-year undergraduate degree cycles.
+
+Each semester record tracks:
+- Semester Number (1 to 8, uniquely validated)
+- Semester Title (e.g., Fall 2026, Spring 2026, Fall 2025)
+- Term Code (e.g., FA26, SP26, FA25)
+- Start Date and End Date
+- Registration Window Status (Open or Closed)
+- Current Term Flag (Active Current or Inactive)
+- Configured Course Count
+
+--------------------------------------------------------------------------------
+2.2 UNDERSTANDING THE TOGGLE BUTTONS (DETAILED EXPLANATION)
+--------------------------------------------------------------------------------
+The system features three related controls that govern student course registration
+and active semester scheduling. Here is exactly how each works:
+
+A. "REGISTRATION WINDOW" TOGGLE BUTTON (IN SEMESTER DIRECTORY TABLE)
+   - Where to find it:
+     In the "Registration Window" column of each semester row in the Semesters 
+     Directory table.
+   - Visual Appearance:
+     * When Open: Green pill button labeled "● Open (Toggle)" with an active pulsing dot.
+     * When Closed: Rose/Red pill button labeled "● Closed (Toggle)".
+   - What it does:
+     Clicking this button toggles course enrollment permissions for that specific 
+     semester between OPEN and CLOSED.
+   - Effect on the system:
+     * When OPEN: Students belonging to or eligible for this semester can register 
+       for, add, or drop courses in their Student Portal.
+     * When CLOSED: The enrollment window is locked. Students viewing this semester 
+       in their portal will see a "Registration Window Closed" notice. All "Register" 
+       and "Drop" action buttons are disabled to prevent unauthorized changes 
+       after academic deadlines.
+   - Typical usage:
+     Turn it OPEN at the beginning of an academic term or add/drop week. Turn it 
+     CLOSED once the deadline passes to freeze class rosters and finalize fees.
+
+B. "CURRENT TERM" BUTTON (IN SEMESTER DIRECTORY TABLE)
+   - Where to find it:
+     In the "Current Term" column of the Semesters Directory table.
+   - Visual Appearance:
+     * For the active semester: A solid indigo badge labeled "Active Current".
+     * For other semesters: A subtle text button labeled "Set Current".
+   - What it does:
+     Clicking "Set Current" marks that specific semester as the university's 
+     primary active academic term (`isCurrent: true`).
+   - Effect on the system:
+     * The system enforces a strict single-active-term rule: setting one semester 
+       as Current automatically unsets the flag on all other semesters.
+     * When creating new courses, the form defaults to this active Current Term.
+     * When students log in, their dashboard prioritizes offerings and notifications 
+       from this active Current Term.
+     * The quick-action toggle button in the Courses Directory (explained below) 
+       dynamically links to this term.
+
+C. "FALL 2026: REGISTRATION OPEN / CLOSED" MASTER SHORTCUT BUTTON
+   - Where to find it:
+     In the filter bar of the "Academic Courses Directory" section (right above 
+     the courses table).
+   - Visual Appearance:
+     * Green pill with pulsing indicator: "[Active Term Name]: Registration Open"
+     * Rose pill with solid red dot: "[Active Term Name]: Registration Closed"
+   - What it is:
+     This is a convenient master shortcut that directly controls the Registration 
+     Window of whichever semester is designated as the university's "Current Term" 
+     (e.g., Fall 2026).
+   - Why it exists:
+     When administrators are managing courses, schedules, and capacities in the 
+     Courses table, they do not need to scroll back up to the Semesters table 
+     to open or close the active term's registration window. Clicking this single 
+     button immediately flips the active semester's registration status.
+   - Bidirectional Synchronization:
+     Toggling this shortcut immediately updates the green/red status badge in the 
+     Semesters Directory table above, and vice versa. Everything stays 100% in sync.
+
+--------------------------------------------------------------------------------
+2.3 ACADEMIC COURSES DIRECTORY & FILTERING
+--------------------------------------------------------------------------------
+Located immediately below the Semesters Directory. This section manages all course 
+offerings, classroom allocations, credit hours, and assigned instructors.
+
+A. "FILTER SEMESTER:" DROPDOWN
+   - Displays "All Configured Semesters" plus only the semesters that are 
+     actually created and visible in the Semesters Directory table.
+   - Shows the live count of courses offered in each semester (e.g., "Fall 2026 (Semester 5) - 5 courses").
+   - Choosing a semester filters the catalog to show only courses taught in that term.
+
+B. "FILTER DEPARTMENT:" DROPDOWN
+   - Displays "All Departments" plus each university department (e.g., Computer 
+     Science (CS), Software Engineering (SE), Electrical Engineering (EE)).
+   - Shows the live count of courses under each department.
+   - Can be combined with the Semester Filter for multi-criteria slicing.
+
+C. "RESET" BUTTON
+   - Appears automatically whenever a filter (Semester, Department) or search 
+     query is active.
+   - Clicking "Reset" clears all active filters and restores the full course view.
+
+D. SEARCH BOX
+   - Located on the right side of the filter bar.
+   - Real-time search across course codes (e.g., "CS-301"), course titles (e.g., 
+     "Operating Systems"), assigned professor names, and department titles.
+   - Includes a quick-clear (x) button when text is entered.
+   - Engineered with a non-collapsible minimum width to remain fully readable 
+     on all screen resolutions.
+
+E. ADDING & EDITING COURSES
+   - Click "+ Add Course" to open the course creation modal.
+   - "Target Academic Semester" is a dropdown strictly populated from configured 
+     semesters in the directory.
+   - "Semester Number" is automatically synchronized and locked to the selected 
+     semester, preventing mismatched data entries.
+   - Select the responsible academic department, credit hours, schedule time, 
+     room/venue, maximum student capacity, and appointed faculty instructor.
+
+--------------------------------------------------------------------------------
+2.4 ACADEMIC DEPARTMENTS DIRECTORY
+--------------------------------------------------------------------------------
+Manage university faculties, department codes (e.g., CS, SE, AI, MATH, EE), 
+and appointed Heads of Department (HOD).
+- Department codes automatically determine student official roll number formulas 
+  (e.g., 2026-cs-01) and institutional email domains.
+- Adding a department immediately updates the Course Department Filter and 
+  student admission forms.
+
+--------------------------------------------------------------------------------
+2.5 FACULTY & STUDENT ROSTERS
+--------------------------------------------------------------------------------
+- Faculty Roster: View faculty appointments, academic designations, HOD status, 
+  and assigned courses. Reset passwords or manage department affiliations.
+- Student Roster: Enroll new student candidates.
+  * Roll Number: Generated following the institutional standard: 
+    `<AdmissionYear>-<DeptCode>-<NumericDigits>` (e.g., 2026-cs-01).
+  * Institutional Email: Automatically generated using the university domain 
+    (e.g., 2026-cs-01@nicore.edu.pk).
+  * Semester selection: Bound strictly to configured semesters in the directory.
+  * Reset Password: Administrator can reset any student or teacher password.
+
+================================================================================
+3. FACULTY / TEACHER PORTAL MANUAL
+================================================================================
+Faculty members can switch between their assigned courses using the top course 
+switcher dropdown.
+
+3.1 Course Management:
+- View enrolled student candidate count vs maximum room capacity.
+- Review weekly meeting schedules and lecture room assignments.
+
+3.2 Academic Evaluations & Grading:
+- Record marks across four core categories:
+  1. Quizzes & Homework (15% weight)
+  2. Assignments & Projects (25% weight)
+  3. Midterm Examination (25% weight)
+  4. Final Examination (35% weight)
+- Total percentage, letter grade (A, B+, B, C, F), and grade points (4.0 scale) 
+  calculate automatically in real time.
+
+3.3 Attendance & Session Broadcasting:
+- Mark attendance (Present, Absent, Late, Excused) for each lecture session.
+- System automatically calculates attendance percentages; students below 75% 
+  receive automated low-attendance warnings.
+- Broadcast automated announcements or reschedule notifications directly to all 
+  enrolled students via the simulated email notification service.
+
+================================================================================
+4. STUDENT PORTAL MANUAL
+================================================================================
+Students access their personalized dashboard to manage course registrations and 
+track academic progress.
+
+4.1 Course Registration:
+- Filter available courses by semester tab (Sem 3, Sem 4, Sem 5, or All).
+- If the semester's Registration Window is OPEN:
+  * Click "Enroll Course" to register. The system enforces credit hour limits 
+    and checks maximum seat capacity.
+  * Click "Drop" if needed before registration closes.
+- If the semester's Registration Window is CLOSED:
+  * Registration actions are disabled. Students cannot add or drop courses.
+
+4.2 Academic Performance & Transcripts:
+- View enrolled courses, credit hours, classroom venues, and instructor details.
+- Review real-time grade breakdowns (Quizzes, Assignments, Midterm, Final).
+- Monitor overall Cumulative GPA (CGPA) and total credits earned.
+
+================================================================================
+5. FREQUENTLY ASKED QUESTIONS (FAQ) & TROUBLESHOOTING
+================================================================================
+
+Q1: What happens if I close the Registration Window?
+A1: Students will not be able to add new courses or drop existing courses in 
+    that semester. Their enrolled courses remain intact and faculty can still 
+    grade them.
+
+Q2: Why does the master shortcut say "Fall 2026: Registration Open"?
+A2: "Fall 2026" is currently designated as the university's "Current Term". 
+    If you change the Current Term in the Semesters table to "Spring 2026", the 
+    shortcut button will immediately update to "Spring 2026: Registration Open".
+
+Q3: Can multiple semesters be set as "Current Term" at the same time?
+A3: No. The university operates under one active primary term at a time. Setting 
+    any semester as Current automatically clears the flag on all other terms.
+
+Q4: What if a course search returns no results?
+A4: Check if you have an active "Filter Semester" or "Filter Department" selected. 
+    Click the "Reset" button in the filter bar to clear all constraints and view 
+    the full course catalog.
+
+================================================================================
+UniCore LMS - Powered by Modern React, TypeScript, Tailwind CSS, & MongoDB Atlas
+================================================================================
