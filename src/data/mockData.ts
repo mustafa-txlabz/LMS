@@ -1,4 +1,4 @@
-import { User, Semester, Course, Enrollment, CourseGradeRecord, LectureSession, AutomatedNotification, Department } from '../types';
+import { User, Semester, Course, Enrollment, CourseGradeRecord, LectureSession, AutomatedNotification, Department, SemesterProgressionAuditLog } from '../types';
 
 export const INITIAL_USERS: User[] = [
   // Admin
@@ -88,6 +88,8 @@ export const INITIAL_USERS: User[] = [
     rollNumber: '29',
     departments: ['Computer Science'],
     semester: 5,
+    admissionType: 'fresh',
+    academicStatus: 'active',
     cgpa: 3.78,
     creditsEarned: 68,
     avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=256&q=80',
@@ -106,6 +108,8 @@ export const INITIAL_USERS: User[] = [
     rollNumber: '88',
     departments: ['Computer Science'],
     semester: 5,
+    admissionType: 'fresh',
+    academicStatus: 'active',
     cgpa: 3.92,
     creditsEarned: 68,
     avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=256&q=80',
@@ -124,6 +128,8 @@ export const INITIAL_USERS: User[] = [
     rollNumber: '104',
     departments: ['Computer Science'],
     semester: 5,
+    admissionType: 'transfer',
+    academicStatus: 'active',
     cgpa: 3.45,
     creditsEarned: 68,
     avatar: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&w=256&q=80',
@@ -142,8 +148,10 @@ export const INITIAL_USERS: User[] = [
     rollNumber: '55',
     departments: ['Computer Science'],
     semester: 5,
-    cgpa: 3.61,
-    creditsEarned: 68,
+    admissionType: 'fresh',
+    academicStatus: 'detained',
+    cgpa: 1.85,
+    creditsEarned: 60,
     avatar: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&w=256&q=80',
   },
   {
@@ -160,6 +168,8 @@ export const INITIAL_USERS: User[] = [
     rollNumber: '12',
     departments: ['Software Engineering'],
     semester: 3,
+    admissionType: 'fresh',
+    academicStatus: 'active',
     cgpa: 3.82,
     creditsEarned: 34,
     avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=256&q=80',
@@ -724,6 +734,37 @@ export const INITIAL_DEPARTMENTS: Department[] = [
     hodName: '',
     description: 'Technology management, corporate finance, entrepreneurship, and strategy.',
     createdAt: '2026-01-15T08:00:00.000Z',
+  },
+];
+
+export const INITIAL_AUDIT_LOGS: SemesterProgressionAuditLog[] = [
+  {
+    id: 'audit-log-1',
+    studentId: 'usr-student-4',
+    studentName: 'David Kim',
+    studentRollNumber: '2021-cs-55',
+    adminId: 'usr-admin-1',
+    adminName: 'Dr. Robert Vance',
+    previousSemester: 4,
+    newSemester: 5,
+    previousStatus: 'active',
+    newStatus: 'detained',
+    reason: 'Academic Controller Term Review: GPA 1.85 fell below 2.0 passing cutoff. Marked detained for term repetition.',
+    timestamp: '2026-09-02T10:15:00.000Z',
+  },
+  {
+    id: 'audit-log-2',
+    studentId: 'usr-student-3',
+    studentName: 'Liam Smith',
+    studentRollNumber: '2021-cs-104',
+    adminId: 'usr-admin-1',
+    adminName: 'Dr. Robert Vance',
+    previousSemester: 4,
+    newSemester: 5,
+    previousStatus: 'active',
+    newStatus: 'active',
+    reason: 'Transfer credit evaluation approved by Department Board; advanced to Semester 5.',
+    timestamp: '2026-09-01T14:30:00.000Z',
   },
 ];
 

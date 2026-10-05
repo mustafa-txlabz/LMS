@@ -14,6 +14,7 @@ import {
   INITIAL_LECTURES,
   INITIAL_NOTIFICATIONS,
   INITIAL_DEPARTMENTS,
+  INITIAL_AUDIT_LOGS,
 } from './src/data/mockData.ts';
 
 dotenv.config({ override: true });
@@ -62,6 +63,8 @@ const UserSchema = new mongooseLib.Schema(
     session: { type: Number, default: 2026 },
     designation: { type: String },
     semester: { type: Number, default: 1 },
+    admissionType: { type: String, enum: ['fresh', 'transfer'], default: 'fresh' },
+    academicStatus: { type: String, enum: ['active', 'detained', 'repeat', 'graduated'], default: 'active' },
     cgpa: { type: Number, default: 3.5 },
     creditsEarned: { type: Number, default: 0 },
     dob: { type: String, default: '2000-01-01' },
@@ -82,6 +85,8 @@ const SemesterSchema = new mongooseLib.Schema(
     startDate: { type: String },
     endDate: { type: String },
     isCurrent: { type: Boolean, default: false },
+    isFinalResultsPublished: { type: Boolean, default: false },
+    finalResultsPublishedAt: { type: String },
   },
   { timestamps: true }
 );
@@ -197,6 +202,26 @@ const DepartmentSchema = new mongooseLib.Schema(
 
 const DepartmentModel = mongooseLib.model('Department', DepartmentSchema);
 
+const AuditLogSchema = new mongooseLib.Schema(
+  {
+    id: { type: String, required: true, unique: true },
+    studentId: { type: String, required: true },
+    studentName: { type: String, required: true },
+    studentRollNumber: { type: String, default: '' },
+    adminId: { type: String, required: true },
+    adminName: { type: String, required: true },
+    previousSemester: { type: Number, required: true },
+    newSemester: { type: Number, required: true },
+    previousStatus: { type: String, default: 'active' },
+    newStatus: { type: String, default: 'active' },
+    reason: { type: String, required: true },
+    timestamp: { type: String, default: () => new Date().toISOString() },
+  },
+  { timestamps: true }
+);
+
+const AuditLogModel = mongooseLib.model('AuditLog', AuditLogSchema);
+
 // In-Memory store fallback if MongoDB Atlas is disconnected or network blocked
 let isMongoConnected = false;
 let memoryUsers = INITIAL_USERS.map((u: any) => {
@@ -214,6 +239,7 @@ let memoryGrades = [...INITIAL_GRADES];
 let memoryLectures = [...INITIAL_LECTURES];
 let memoryNotifications = [...INITIAL_NOTIFICATIONS];
 let memoryDepartments = [...INITIAL_DEPARTMENTS];
+let memoryAuditLogs = [...INITIAL_AUDIT_LOGS];
 
 async function initMongoDB() {
   if (!mongoUri) {
@@ -240,7 +266,14 @@ async function initMongoDB() {
       await GradeModel.insertMany(INITIAL_GRADES);
       await LectureModel.insertMany(INITIAL_LECTURES);
       await NotificationModel.insertMany(INITIAL_NOTIFICATIONS);
+      await AuditLogModel.insertMany(INITIAL_AUDIT_LOGS);
       console.log('[MongoDB] Seeding completed successfully!');
+    }
+
+    // Ensure audit logs are seeded if empty
+    const auditCount = await AuditLogModel.countDocuments();
+    if (auditCount === 0 && INITIAL_AUDIT_LOGS.length > 0) {
+      await AuditLogModel.insertMany(INITIAL_AUDIT_LOGS);
     }
 
     // Ensure departments are seeded
@@ -287,7 +320,7 @@ async function initMongoDB() {
 app.get('/api/bootstrap', async (_req: Request, res: Response) => {
   try {
     if (isMongoConnected) {
-      const [users, semesters, courses, enrollments, grades, lectures, notifications, departments] = await Promise.all([
+      const [users, semesters, courses, enrollments, grades, lectures, notifications, departments, auditLogs] = await Promise.all([
         UserModel.find().lean(),
         SemesterModel.find().lean(),
         CourseModel.find().lean(),
@@ -296,6 +329,7 @@ app.get('/api/bootstrap', async (_req: Request, res: Response) => {
         LectureModel.find().lean(),
         NotificationModel.find().lean(),
         DepartmentModel.find().lean(),
+        AuditLogModel.find().sort({ createdAt: -1 }).lean(),
       ]);
 
       const sanitizedUsers = users.map((u: any) => {
@@ -317,6 +351,7 @@ app.get('/api/bootstrap', async (_req: Request, res: Response) => {
         lectures,
         notifications,
         departments: departments && departments.length > 0 ? departments : memoryDepartments,
+        auditLogs: auditLogs && auditLogs.length > 0 ? auditLogs : memoryAuditLogs,
       });
     }
 
@@ -339,6 +374,7 @@ app.get('/api/bootstrap', async (_req: Request, res: Response) => {
       lectures: memoryLectures,
       notifications: memoryNotifications,
       departments: memoryDepartments,
+      auditLogs: memoryAuditLogs,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -559,8 +595,80 @@ app.put('/api/users/:id/password', async (req: Request, res: Response) => {
   }
 });
 
+// -------------------------------------------------------------
+// Semester Progression Validation Middlewares
+// -------------------------------------------------------------
+
+// Role-Based Access Validation: Super Admin or Academic Controller only
+const requireAdminOrControllerRole = async (req: Request, res: Response, next: Function) => {
+  const adminId = req.body.adminId || req.headers['x-admin-id'];
+  if (!adminId) {
+    return res.status(403).json({
+      error: 'Permission denied: Action is strictly restricted to Super Admin or Academic Controller roles. Missing admin identifier.',
+    });
+  }
+
+  try {
+    let adminUser: any = null;
+    if (isMongoConnected) {
+      adminUser = await UserModel.findOne({ id: adminId });
+    } else {
+      adminUser = memoryUsers.find((u) => u.id === adminId);
+    }
+
+    if (!adminUser || adminUser.role !== 'admin') {
+      return res.status(403).json({
+        error: 'Permission denied: User does not hold Super Admin or Academic Controller privileges.',
+      });
+    }
+
+    req.body._verifiedAdmin = adminUser;
+    next();
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to verify administrator privileges: ' + err.message });
+  }
+};
+
+// Mandatory Audit Reason Validation (reject if empty, null, or whitespace)
+const requireMandatoryAuditReason = (req: Request, res: Response, next: Function) => {
+  const { reason } = req.body;
+  if (!reason || typeof reason !== 'string' || !reason.trim()) {
+    return res.status(400).json({
+      error: 'Mandatory audit reason is required. Manual semester override request rejected.',
+    });
+  }
+  next();
+};
+
+// Student Onboarding Validation: Fresh -> current_semester = 1 locked; Transfer -> custom semester allowed
+const validateStudentOnboarding = (req: Request, res: Response, next: Function) => {
+  const { role, admissionType, semester } = req.body;
+  if (role === 'student') {
+    const cleanAdmission = admissionType === 'transfer' ? 'transfer' : 'fresh';
+    req.body.admissionType = cleanAdmission;
+
+    if (cleanAdmission === 'fresh') {
+      // Fresh admission strictly locked to Semester 1
+      req.body.semester = 1;
+    } else {
+      // Transfer student: Starting semester must be an integer between 1 and 8
+      const semNum = Number(semester);
+      if (isNaN(semNum) || semNum < 1 || semNum > 8) {
+        return res.status(400).json({
+          error: 'Transfer student starting semester must be an integer between 1 and 8.',
+        });
+      }
+      req.body.semester = semNum;
+    }
+
+    // Default status set to 'active'
+    req.body.academicStatus = req.body.academicStatus || 'active';
+  }
+  next();
+};
+
 // Admin Add Student or Teacher
-app.post('/api/admin/users', async (req: Request, res: Response) => {
+app.post('/api/admin/users', validateStudentOnboarding, async (req: Request, res: Response) => {
   const {
     name,
     email,
@@ -572,6 +680,8 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
     session,
     designation,
     semester,
+    admissionType,
+    academicStatus,
     dob,
     phone,
     address,
@@ -586,6 +696,8 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
     ? departments
     : department ? [department] : ['Computer Science'];
 
+  const assignedSemester = role === 'student' ? Number(semester) || 1 : undefined;
+
   const newUser: any = {
     id: `usr-${role}-${Date.now()}`,
     name,
@@ -596,7 +708,9 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
     rollNumber: role === 'student' ? rollNumber || '1' : undefined,
     session: role === 'student' ? Number(session) || 2026 : undefined,
     designation: role === 'teacher' ? designation || 'Assistant Professor' : undefined,
-    semester: role === 'student' ? Number(semester) || 1 : undefined,
+    semester: assignedSemester,
+    admissionType: role === 'student' ? admissionType : undefined,
+    academicStatus: role === 'student' ? academicStatus : undefined,
     cgpa: role === 'student' ? 3.5 : undefined,
     creditsEarned: 0,
     dob: dob || '2002-01-01',
@@ -649,6 +763,400 @@ app.put('/api/admin/users/:id', async (req: Request, res: Response) => {
     delete memoryUsers[idx].department;
     const { password: _, ...sanitized } = memoryUsers[idx];
     return res.json({ user: sanitized, success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Semester Progression & Manual Override API Routes
+// -------------------------------------------------------------
+
+// Get all progression audit logs (optionally filtered by studentId)
+app.get('/api/admin/audit-logs', async (req: Request, res: Response) => {
+  const { studentId } = req.query;
+  try {
+    if (isMongoConnected) {
+      const filter = studentId ? { studentId: String(studentId) } : {};
+      const logs = await AuditLogModel.find(filter).sort({ createdAt: -1 }).lean();
+      return res.json({ success: true, logs });
+    }
+    let logs = [...memoryAuditLogs].reverse();
+    if (studentId) {
+      logs = logs.filter((l) => l.studentId === studentId);
+    }
+    return res.json({ success: true, logs });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Super Admin Manual Semester Override with Mandatory Audit Reason
+app.post(
+  '/api/admin/students/:id/override-semester',
+  requireAdminOrControllerRole,
+  requireMandatoryAuditReason,
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { newSemester, reason, adminId, adminName, newSession, newRollNumber, newEmail } = req.body;
+
+    const semNum = Number(newSemester);
+    if (isNaN(semNum) || semNum < 1 || semNum > 8) {
+      return res.status(400).json({
+        error: 'Invalid target semester. Semester must be an integer between 1 and 8.',
+      });
+    }
+
+  try {
+    let student: any = null;
+    let prevSem = 1;
+    let prevStatus = 'active';
+
+    if (isMongoConnected) {
+      student = await UserModel.findOne({ id, role: 'student' });
+      if (!student) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+
+      prevSem = student.semester || 1;
+      prevStatus = student.academicStatus || 'active';
+
+      student.semester = semNum;
+      if (newSession && !isNaN(Number(newSession))) {
+        student.session = Number(newSession);
+        student.sessionYear = Number(newSession);
+      }
+      if (newRollNumber && typeof newRollNumber === 'string') {
+        student.rollNumber = newRollNumber;
+      }
+      if (newEmail && typeof newEmail === 'string') {
+        student.email = newEmail;
+      }
+      // Status Synchronization: If an admin manually promotes/adjusts a "detained" student, reset their status back to "active"
+      if (student.academicStatus === 'detained' || student.academicStatus === 'repeat') {
+        student.academicStatus = 'active';
+      }
+      await student.save();
+
+      const auditLog = {
+        id: `audit-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        studentId: student.id,
+        studentName: student.name,
+        studentRollNumber: student.rollNumber || '',
+        adminId,
+        adminName: adminName || 'Super Admin',
+        previousSemester: prevSem,
+        newSemester: semNum,
+        previousStatus: prevStatus,
+        newStatus: student.academicStatus,
+        reason: reason.trim(),
+        timestamp: new Date().toISOString(),
+      };
+
+      await AuditLogModel.create(auditLog);
+
+      // Automated Notification dispatched to Student
+      await NotificationModel.create({
+        id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        recipientId: student.id,
+        recipientEmail: student.email,
+        recipientName: student.name,
+        senderName: 'Academic Registrar & Controller Office',
+        type: 'grade_update',
+        subject: `Official Academic Notice: Manual Semester Adjustment to Semester ${semNum}`,
+        message: `An official administrative override has been approved by ${adminName || 'Super Admin'} adjusting your current semester from Semester ${prevSem} to Semester ${semNum}. Status: ${student.academicStatus.toUpperCase()}. Reason: ${reason.trim()}.`,
+        timestamp: new Date().toISOString(),
+        read: false,
+        emailDispatched: true,
+      });
+
+      const { password: _, ...sanitized } = student.toObject();
+      return res.json({
+        success: true,
+        student: sanitized,
+        auditLog,
+        message: `Successfully adjusted ${student.name}'s semester to Semester ${semNum}. Status synchronized to ${student.academicStatus}.`,
+      });
+    }
+
+    // In-memory fallback
+    const idx = memoryUsers.findIndex((u) => u.id === id && u.role === 'student');
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    student = memoryUsers[idx];
+    prevSem = student.semester || 1;
+    prevStatus = student.academicStatus || 'active';
+
+    student.semester = semNum;
+    if (newSession && !isNaN(Number(newSession))) {
+      student.session = Number(newSession);
+      student.sessionYear = Number(newSession);
+    }
+    if (newRollNumber && typeof newRollNumber === 'string') {
+      student.rollNumber = newRollNumber;
+    }
+    if (newEmail && typeof newEmail === 'string') {
+      student.email = newEmail;
+    }
+    // Status Synchronization: If an admin manually promotes/adjusts a "detained" student, reset their status back to "active"
+    if (student.academicStatus === 'detained' || student.academicStatus === 'repeat') {
+      student.academicStatus = 'active';
+    }
+
+    const auditLog = {
+      id: `audit-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      studentId: student.id,
+      studentName: student.name,
+      studentRollNumber: student.rollNumber || '',
+      adminId,
+      adminName: adminName || 'Super Admin',
+      previousSemester: prevSem,
+      newSemester: semNum,
+      previousStatus: prevStatus,
+      newStatus: student.academicStatus,
+      reason: reason.trim(),
+      timestamp: new Date().toISOString(),
+    };
+
+    memoryAuditLogs.unshift(auditLog as any);
+
+    memoryNotifications.unshift({
+      id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      recipientId: student.id,
+      recipientEmail: student.email,
+      recipientName: student.name,
+      senderName: 'Academic Registrar & Controller Office',
+      type: 'grade_update',
+      subject: `Official Academic Notice: Manual Semester Adjustment to Semester ${semNum}`,
+      message: `An official administrative override has been approved by ${adminName || 'Super Admin'} adjusting your current semester from Semester ${prevSem} to Semester ${semNum}. Status: ${student.academicStatus.toUpperCase()}. Reason: ${reason.trim()}.`,
+      timestamp: new Date().toISOString(),
+      read: false,
+      emailDispatched: true,
+    });
+
+    const { password: _, ...sanitized } = student;
+    return res.json({
+      success: true,
+      student: sanitized,
+      auditLog,
+      message: `Successfully adjusted ${student.name}'s semester to Semester ${semNum}. Status synchronized to ${student.academicStatus}.`,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Automated Semester Promotion Engine (Batch Processing)
+app.post('/api/admin/semesters/:id/publish-results-and-promote', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const minGpa = Number(req.body.minGpa) || 2.0;
+  const adminId = req.body.adminId || 'usr-admin-1';
+  const adminName = req.body.adminName || 'Academic Controller';
+
+  try {
+    let semester: any = null;
+    let allCourses: any[] = [];
+    let allEnrollments: any[] = [];
+    let allGrades: any[] = [];
+    let allStudents: any[] = [];
+
+    if (isMongoConnected) {
+      semester = await SemesterModel.findOne({ id });
+      if (!semester) return res.status(404).json({ error: 'Semester not found' });
+
+      allCourses = await CourseModel.find({ $or: [{ semesterId: semester.id }, { semesterNumber: semester.number }] }).lean();
+      allEnrollments = await EnrollmentModel.find({ status: 'registered' }).lean();
+      allGrades = await GradeModel.find().lean();
+      allStudents = await UserModel.find({ role: 'student' });
+    } else {
+      semester = memorySemesters.find((s) => s.id === id);
+      if (!semester) return res.status(404).json({ error: 'Semester not found' });
+
+      allCourses = memoryCourses.filter((c) => c.semesterId === semester.id || c.semesterNumber === semester.number);
+      allEnrollments = memoryEnrollments.filter((e) => e.status === 'registered');
+      allGrades = memoryGrades;
+      allStudents = memoryUsers.filter((u) => u.role === 'student');
+    }
+
+    const courseIds = new Set(allCourses.map((c) => c.id));
+
+    // Target students: enrolled in any course of this semester OR student's current semester matches semester.number
+    const targetStudentIds = new Set<string>();
+    allEnrollments.forEach((e) => {
+      if (courseIds.has(e.courseId)) {
+        targetStudentIds.add(e.studentId);
+      }
+    });
+
+    allStudents.forEach((s) => {
+      if (s.semester === semester.number) {
+        targetStudentIds.add(s.id);
+      }
+    });
+
+    const evaluatedResults: any[] = [];
+    let promotedCount = 0;
+    let detainedCount = 0;
+    let graduatedCount = 0;
+
+    for (const student of allStudents) {
+      if (!targetStudentIds.has(student.id)) continue;
+
+      // Calculate term performance for this student
+      const studentEnrollments = allEnrollments.filter((e) => e.studentId === student.id && courseIds.has(e.courseId));
+      let totalQualityPoints = 0;
+      let totalAttemptedCredits = 0;
+      let totalEarnedCredits = 0;
+      let failedCoursesCount = 0;
+
+      studentEnrollments.forEach((e) => {
+        const course = allCourses.find((c) => c.id === e.courseId);
+        const cr = course?.creditHours || 3;
+        totalAttemptedCredits += cr;
+
+        const gradeRec = allGrades.find((g) => g.courseId === e.courseId && g.studentId === student.id);
+        const marks = gradeRec?.marks;
+        const gp = marks?.gradePoints !== undefined ? marks.gradePoints : 3.0;
+        const isFailed = marks?.letterGrade === 'F' || (marks?.total !== undefined && marks.total < 50);
+
+        if (isFailed) {
+          failedCoursesCount++;
+        } else {
+          totalEarnedCredits += cr;
+        }
+        totalQualityPoints += gp * cr;
+      });
+
+      const termGpa = totalAttemptedCredits > 0
+        ? Number((totalQualityPoints / totalAttemptedCredits).toFixed(2))
+        : (student.cgpa || 3.0);
+
+      const effectiveGpa = student.cgpa ? Number(((student.cgpa + termGpa) / 2).toFixed(2)) : termGpa;
+
+      // Evaluation Criteria:
+      // Minimum CGPA >= minGpa (default 2.0) AND did not fail majority of credits
+      const meetsGpa = effectiveGpa >= minGpa;
+      const meetsCredits = totalAttemptedCredits === 0 || (totalEarnedCredits >= (totalAttemptedCredits * 0.5) && failedCoursesCount <= 1);
+      const passed = meetsGpa && meetsCredits;
+
+      const currentSem = student.semester || semester.number;
+      let nextSem = currentSem;
+      let decision: 'promoted' | 'detained' | 'graduated' = 'promoted';
+      let reasonStr = '';
+
+      if (passed) {
+        if (currentSem >= 8) {
+          decision = 'graduated';
+          student.academicStatus = 'graduated';
+          graduatedCount++;
+          reasonStr = `Completed final semester (Semester 8) with CGPA ${effectiveGpa}. Conferred Graduation status.`;
+        } else {
+          decision = 'promoted';
+          nextSem = currentSem + 1;
+          student.semester = nextSem;
+          student.academicStatus = 'active';
+          promotedCount++;
+          reasonStr = `Met passing criteria (CGPA ${effectiveGpa} >= ${minGpa}, earned ${totalEarnedCredits}/${totalAttemptedCredits} credits). Promoted to Semester ${nextSem}.`;
+        }
+      } else {
+        decision = 'detained';
+        // Detention Policy:
+        // Do NOT increment current_semester. Keep current_semester unchanged.
+        // Set academic status to 'detained'.
+        student.academicStatus = 'detained';
+        detainedCount++;
+        reasonStr = `Under-criteria detention: CGPA ${effectiveGpa} (Cutoff: ${minGpa}) or failed courses (${failedCoursesCount}). Retained in Semester ${currentSem} for course repetition.`;
+      }
+
+      if (isMongoConnected) {
+        await student.save();
+      }
+
+      evaluatedResults.push({
+        studentId: student.id,
+        studentName: student.name,
+        rollNumber: student.rollNumber,
+        department: Array.isArray(student.departments) ? student.departments[0] : (student.department || 'Computer Science'),
+        currentSemester: currentSem,
+        nextSemester: nextSem,
+        gpa: effectiveGpa,
+        creditsAttempted: totalAttemptedCredits,
+        creditsPassed: totalEarnedCredits,
+        passed,
+        decision,
+        reason: reasonStr,
+      });
+
+      // Audit Logging for batch progression evaluation
+      const batchAuditLog = {
+        id: `audit-batch-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        studentId: student.id,
+        studentName: student.name,
+        studentRollNumber: student.rollNumber || '',
+        adminId,
+        adminName,
+        previousSemester: currentSem,
+        newSemester: nextSem,
+        previousStatus: 'active',
+        newStatus: student.academicStatus,
+        reason: `[Batch Promotion: ${semester.name}] ${reasonStr}`,
+        timestamp: new Date().toISOString(),
+      };
+
+      if (isMongoConnected) {
+        await AuditLogModel.create(batchAuditLog);
+      } else {
+        memoryAuditLogs.unshift(batchAuditLog as any);
+      }
+
+      // Automated Notification dispatched to student
+      const notifMsg = decision === 'promoted'
+        ? `Congratulations! Final term results for ${semester.name} have been published. You have met academic promotion criteria (CGPA: ${effectiveGpa}) and have been promoted to Semester ${nextSem}.`
+        : decision === 'graduated'
+        ? `Congratulations! Final results for ${semester.name} have been published. You have successfully fulfilled all degree graduation requirements!`
+        : `Academic Notice: Final results for ${semester.name} have been published. You have been placed on Detained (Semester Repeat) status due to academic requirements (CGPA: ${effectiveGpa}). You will repeat Semester ${currentSem} and any unearned courses in the upcoming term.`;
+
+      const notifItem = {
+        id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        recipientId: student.id,
+        recipientEmail: student.email,
+        recipientName: student.name,
+        senderName: 'Academic Controller Office',
+        type: 'grade_update',
+        subject: `Term Examination Results & Semester Progression: ${semester.name}`,
+        message: notifMsg,
+        timestamp: new Date().toISOString(),
+        read: false,
+        emailDispatched: true,
+      };
+
+      if (isMongoConnected) {
+        await NotificationModel.create(notifItem);
+      } else {
+        memoryNotifications.unshift(notifItem as any);
+      }
+    }
+
+    // Mark semester final results as published
+    semester.isFinalResultsPublished = true;
+    semester.finalResultsPublishedAt = new Date().toISOString();
+    if (isMongoConnected) {
+      await semester.save();
+    }
+
+    return res.json({
+      success: true,
+      summary: {
+        totalEvaluated: evaluatedResults.length,
+        promotedCount,
+        detainedCount,
+        graduatedCount,
+        results: evaluatedResults,
+      },
+      message: `Final results declared for ${semester.name}. Processed ${evaluatedResults.length} students: ${promotedCount} Promoted, ${detainedCount} Detained, ${graduatedCount} Graduated.`,
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

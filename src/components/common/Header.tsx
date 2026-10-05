@@ -16,6 +16,7 @@ import {
   FileSpreadsheet,
   CheckCircle2,
   Building2,
+  ShieldAlert,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -67,6 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
         { id: 'faculty', label: 'Faculty', fullLabel: 'Faculty Directory', icon: Users },
         { id: 'students', label: 'Students', fullLabel: 'Student Directory', icon: GraduationCap },
         { id: 'departments', label: 'Departments', fullLabel: 'Academic Departments', icon: Building2 },
+        { id: 'audit', label: 'Audit Trail', fullLabel: 'Progression Audit Trail', icon: ShieldAlert },
       ];
     } else if (currentUser.role === 'teacher') {
       return [

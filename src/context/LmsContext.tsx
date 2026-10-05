@@ -12,6 +12,7 @@ import {
   SystemAnalytics,
   AttendanceStatus,
   Department,
+  SemesterProgressionAuditLog,
 } from '../types';
 import {
   INITIAL_USERS,
@@ -22,6 +23,7 @@ import {
   INITIAL_LECTURES,
   INITIAL_NOTIFICATIONS,
   INITIAL_DEPARTMENTS,
+  INITIAL_AUDIT_LOGS,
 } from '../data/mockData';
 import { formatStudentEmail, getDepartmentCode } from '../utils/studentEmail';
 
@@ -53,6 +55,21 @@ interface LmsContextType {
   adminUpdateUser: (userId: string, userData: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   adminDeleteUser: (userId: string) => Promise<{ success: boolean; error?: string }>;
   adminResetPassword: (userId: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
+
+  // Student Semester Progression & Audit (Admin)
+  auditLogs: SemesterProgressionAuditLog[];
+  overrideStudentSemester: (
+    studentId: string,
+    newSemester: number,
+    reason: string,
+    newSession?: number,
+    newRollNumber?: string,
+    newEmail?: string
+  ) => Promise<{ success: boolean; error?: string; auditLog?: SemesterProgressionAuditLog }>;
+  publishSemesterResultsAndPromote: (
+    semesterId: string,
+    minGpa?: number
+  ) => Promise<{ success: boolean; error?: string; summary?: any }>;
 
   // Department Management (Admin)
   departments: Department[];
@@ -251,6 +268,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_DEPARTMENTS;
   });
 
+  const [auditLogs, setAuditLogs] = useState<SemesterProgressionAuditLog[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'audit_logs');
+    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_PREFIX + 'audit_logs', JSON.stringify(auditLogs));
+  }, [auditLogs]);
+
   const [selectedEmailModal, setSelectedEmailModal] = useState<AutomatedNotification | null>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
@@ -279,6 +305,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setNotifications(data.notifications);
           if (data.departments && data.departments.length > 0) {
             setDepartments(data.departments);
+          }
+          if (data.auditLogs && data.auditLogs.length > 0) {
+            setAuditLogs(data.auditLogs);
           }
 
           // Update current user reference if logged in
@@ -568,6 +597,16 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? userData.departments
       : userData.department ? [userData.department] : ['Computer Science'];
 
+    // Student Onboarding Rules:
+    // - If Admission Type is "Fresh", automatically set current_semester = 1 and lock it.
+    // - If Admission Type is "Transfer" (or Lateral Entry), allow manual semester selection.
+    // - Default status set to "active".
+    const admissionType = userData.admissionType === 'transfer' ? 'transfer' : 'fresh';
+    const assignedSemester = userData.role === 'student'
+      ? (admissionType === 'fresh' ? 1 : (Number(userData.semester) || 2))
+      : undefined;
+    const academicStatus = userData.role === 'student' ? (userData.academicStatus || 'active') : undefined;
+
     const newUser: User = {
       id: `usr-${userData.role || 'user'}-${Date.now()}`,
       name: userData.name || '',
@@ -580,7 +619,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       session: userData.role === 'student' ? Number(userData.session) || 2026 : undefined,
       sessionYear: userData.role === 'student' ? Number(userData.session) || 2026 : undefined,
       designation: userData.role === 'teacher' ? userData.designation || 'Assistant Professor' : undefined,
-      semester: userData.role === 'student' ? Number(userData.semester) || 1 : undefined,
+      semester: assignedSemester,
+      admissionType: userData.role === 'student' ? admissionType : undefined,
+      academicStatus,
       cgpa: userData.role === 'student' ? 3.5 : undefined,
       creditsEarned: 0,
       dob: userData.dob || '2002-01-01',
@@ -593,6 +634,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const userPayload: any = {
       ...userData,
       departments: assignedDepts,
+      semester: assignedSemester,
+      admissionType: userData.role === 'student' ? admissionType : undefined,
+      academicStatus,
     };
     delete userPayload.department;
 
@@ -631,6 +675,272 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     return { success: true };
+  };
+
+  // Super Admin: Manual Semester Override with Mandatory Audit Trail
+  const overrideStudentSemester = async (
+    studentId: string,
+    newSemester: number,
+    reason: string,
+    newSession?: number,
+    newRollNumber?: string,
+    newEmail?: string
+  ): Promise<{ success: boolean; error?: string; auditLog?: SemesterProgressionAuditLog }> => {
+    if (!reason || !reason.trim()) {
+      return {
+        success: false,
+        error: 'Mandatory audit reason is required for manual semester override. Request rejected.',
+      };
+    }
+
+    const adminId = currentUser?.id || 'usr-admin-1';
+    const adminName = currentUser?.name || 'Super Admin';
+
+    try {
+      const response = await fetch(`/api/admin/students/${studentId}/override-semester`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          newSemester,
+          reason: reason.trim(),
+          adminId,
+          adminName,
+          newSession,
+          newRollNumber,
+          newEmail,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        return { success: false, error: data.error || 'Failed to override student semester.' };
+      }
+
+      setUsers((prev) =>
+        prev.map((u) => {
+          if (u.id === studentId) {
+            return {
+              ...u,
+              semester: newSemester,
+              academicStatus: (u.academicStatus === 'detained' || u.academicStatus === 'repeat') ? 'active' : (u.academicStatus || 'active'),
+              ...(newSession ? { session: Number(newSession), sessionYear: Number(newSession) } : {}),
+              ...(newRollNumber ? { rollNumber: newRollNumber } : {}),
+              ...(newEmail ? { email: newEmail } : {}),
+            };
+          }
+          return u;
+        })
+      );
+
+      if (data.auditLog) {
+        setAuditLogs((prev) => [data.auditLog, ...prev]);
+      }
+
+      return { success: true, auditLog: data.auditLog };
+    } catch {
+      // Offline / in-memory fallback
+      const student = users.find((u) => u.id === studentId);
+      if (!student) return { success: false, error: 'Student not found.' };
+
+      const prevSem = student.semester || 1;
+      const prevStatus = student.academicStatus || 'active';
+      const newStatus = (student.academicStatus === 'detained' || student.academicStatus === 'repeat') ? 'active' : (student.academicStatus || 'active');
+
+      const newAudit: SemesterProgressionAuditLog = {
+        id: `audit-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        studentId: student.id,
+        studentName: student.name,
+        studentRollNumber: newRollNumber || student.rollNumber || '',
+        adminId,
+        adminName,
+        previousSemester: prevSem,
+        newSemester,
+        previousStatus: prevStatus,
+        newStatus,
+        reason: reason.trim(),
+        timestamp: new Date().toISOString(),
+      };
+
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === studentId
+            ? {
+                ...u,
+                semester: newSemester,
+                academicStatus: newStatus,
+                ...(newSession ? { session: Number(newSession), sessionYear: Number(newSession) } : {}),
+                ...(newRollNumber ? { rollNumber: newRollNumber } : {}),
+                ...(newEmail ? { email: newEmail } : {}),
+              }
+            : u
+        )
+      );
+
+      setAuditLogs((prev) => [newAudit, ...prev]);
+
+      return { success: true, auditLog: newAudit };
+    }
+  };
+
+  // Automated Semester Promotion Engine (Batch Processing)
+  const publishSemesterResultsAndPromote = async (
+    semesterId: string,
+    minGpa: number = 2.0
+  ): Promise<{ success: boolean; error?: string; summary?: any }> => {
+    const adminId = currentUser?.id || 'usr-admin-1';
+    const adminName = currentUser?.name || 'Academic Controller';
+
+    try {
+      const response = await fetch(`/api/admin/semesters/${semesterId}/publish-results-and-promote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          minGpa,
+          adminId,
+          adminName,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        return { success: false, error: data.error || 'Failed to run semester promotion engine.' };
+      }
+
+      // Update semester status in state
+      setSemesters((prev) =>
+        prev.map((s) =>
+          s.id === semesterId
+            ? { ...s, isFinalResultsPublished: true, finalResultsPublishedAt: new Date().toISOString() }
+            : s
+        )
+      );
+
+      // Refresh users from evaluated batch results
+      if (data.summary && Array.isArray(data.summary.results)) {
+        setUsers((prev) =>
+          prev.map((u) => {
+            const res = data.summary.results.find((r: any) => r.studentId === u.id);
+            if (res) {
+              return {
+                ...u,
+                semester: res.nextSemester,
+                academicStatus: res.decision === 'graduated' ? 'graduated' : (res.decision === 'detained' ? 'detained' : 'active'),
+              };
+            }
+            return u;
+          })
+        );
+      }
+
+      return { success: true, summary: data.summary };
+    } catch {
+      // Local fallback evaluation
+      const sem = semesters.find((s) => s.id === semesterId);
+      if (!sem) return { success: false, error: 'Semester not found.' };
+
+      const semCourses = courses.filter((c) => c.semesterId === sem.id || c.semesterNumber === sem.number);
+      const semCourseIds = new Set(semCourses.map((c) => c.id));
+
+      const semStudents = users.filter((u) => u.role === 'student' && (u.semester === sem.number || enrollments.some((e) => e.studentId === u.id && semCourseIds.has(e.courseId))));
+
+      const evaluatedResults: any[] = [];
+      let promoted = 0;
+      let detained = 0;
+      let graduated = 0;
+
+      const updatedUsers = users.map((u) => {
+        if (!semStudents.some((s) => s.id === u.id)) return u;
+
+        const effectiveGpa = u.cgpa || 3.0;
+        const passed = effectiveGpa >= minGpa;
+        const curSem = u.semester || sem.number;
+        let nextSem = curSem;
+        let decision: 'promoted' | 'detained' | 'graduated' = 'promoted';
+        let reasonStr = '';
+
+        if (passed) {
+          if (curSem >= 8) {
+            decision = 'graduated';
+            graduated++;
+            reasonStr = `Completed Semester 8 with CGPA ${effectiveGpa}. Conferred Graduation.`;
+            evaluatedResults.push({
+              studentId: u.id,
+              studentName: u.name,
+              rollNumber: u.rollNumber,
+              department: u.departments[0] || 'Computer Science',
+              currentSemester: curSem,
+              nextSemester: curSem,
+              gpa: effectiveGpa,
+              creditsAttempted: 15,
+              creditsPassed: 15,
+              passed: true,
+              decision,
+              reason: reasonStr,
+            });
+            return { ...u, academicStatus: 'graduated' as const };
+          } else {
+            decision = 'promoted';
+            nextSem = curSem + 1;
+            promoted++;
+            reasonStr = `Met promotion threshold (CGPA ${effectiveGpa} >= ${minGpa}). Promoted to Semester ${nextSem}.`;
+            evaluatedResults.push({
+              studentId: u.id,
+              studentName: u.name,
+              rollNumber: u.rollNumber,
+              department: u.departments[0] || 'Computer Science',
+              currentSemester: curSem,
+              nextSemester: nextSem,
+              gpa: effectiveGpa,
+              creditsAttempted: 15,
+              creditsPassed: 15,
+              passed: true,
+              decision,
+              reason: reasonStr,
+            });
+            return { ...u, semester: nextSem, academicStatus: 'active' as const };
+          }
+        } else {
+          decision = 'detained';
+          detained++;
+          reasonStr = `Detention / Repeat policy: CGPA ${effectiveGpa} < ${minGpa}. Retained in Semester ${curSem} for course repetition.`;
+          evaluatedResults.push({
+            studentId: u.id,
+            studentName: u.name,
+            rollNumber: u.rollNumber,
+            department: u.departments[0] || 'Computer Science',
+            currentSemester: curSem,
+            nextSemester: curSem,
+            gpa: effectiveGpa,
+            creditsAttempted: 15,
+            creditsPassed: 6,
+            passed: false,
+            decision,
+            reason: reasonStr,
+          });
+          return { ...u, academicStatus: 'detained' as const };
+        }
+      });
+
+      setUsers(updatedUsers);
+      setSemesters((prev) =>
+        prev.map((s) =>
+          s.id === semesterId
+            ? { ...s, isFinalResultsPublished: true, finalResultsPublishedAt: new Date().toISOString() }
+            : s
+        )
+      );
+
+      return {
+        success: true,
+        summary: {
+          totalEvaluated: evaluatedResults.length,
+          promotedCount: promoted,
+          detainedCount: detained,
+          graduatedCount: graduated,
+          results: evaluatedResults,
+        },
+      };
+    }
   };
 
   // Admin: Delete Student or Teacher
@@ -1492,6 +1802,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         adminUpdateUser,
         adminDeleteUser,
         adminResetPassword,
+        auditLogs,
+        overrideStudentSemester,
+        publishSemesterResultsAndPromote,
         departments,
         addDepartment,
         updateDepartment,

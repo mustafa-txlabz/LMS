@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { User, Role } from '../../types';
+import { User, Role, AdmissionType, Semester } from '../../types';
 import { useLms } from '../../context/LmsContext';
 import {
   X,
@@ -113,22 +113,81 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
   const [designation, setDesignation] = useState(userToEdit?.designation || 'Assistant Professor');
   const [teacherEmail, setTeacherEmail] = useState(userToEdit?.email || '');
 
-  // Student specific: session year, roll number, semester
-  // For new students: session year is fixed to currentYear and semester is fixed to 1
-  // For existing students (Manage & Reset): session and semester can be freely modified
-  const [session, setSession] = useState<number>(
-    isEditing ? userToEdit?.session || userToEdit?.sessionYear || currentYear : currentYear
+  // Student specific: session year, roll number, semester, admission type
+  // Student Onboarding Rules:
+  // - If Admission Type is "Fresh", automatically set current_semester = 1 and lock it.
+  // - If Admission Type is "Transfer" (or Lateral Entry), allow manual starting semester selection.
+  // - Default status set to "active".
+  const [admissionType, setAdmissionType] = useState<AdmissionType>(
+    userToEdit?.admissionType || 'fresh'
   );
+
+  const todayDateStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  const [session, setSession] = useState<number>(() => {
+    if (isEditing && (userToEdit?.session || userToEdit?.sessionYear)) {
+      return Number(userToEdit.session || userToEdit.sessionYear);
+    }
+    return currentYear;
+  });
+
+  const [sessionDate, setSessionDate] = useState<string>(() => {
+    if (isEditing && (userToEdit?.session || userToEdit?.sessionYear)) {
+      const yr = Number(userToEdit.session || userToEdit.sessionYear);
+      if (yr === currentYear) return todayDateStr;
+      return `${yr}-01-01`;
+    }
+    return todayDateStr; // Current date is selected by default
+  });
+
+  // Dynamically derive available semesters from system
+  const availableSemesters = useMemo<Semester[]>(() => {
+    const sorted = [...semesters].sort((a, b) => a.number - b.number);
+    // If editing a student whose assigned semester isn't in system list, keep it visible
+    if (isEditing && userToEdit?.semester && !sorted.some((s: Semester) => s.number === userToEdit.semester)) {
+      sorted.push({
+        id: `sem-${userToEdit.semester}`,
+        name: `Semester ${userToEdit.semester}`,
+        number: userToEdit.semester,
+        code: `S${userToEdit.semester}`,
+        isRegistrationOpen: false,
+        isCurrent: false,
+        startDate: '2026-01-01',
+        endDate: '2026-06-30',
+      });
+      sorted.sort((a, b) => a.number - b.number);
+    }
+    return sorted.length > 0
+      ? sorted
+      : [{ id: 'sem-1', name: 'Semester 1', number: 1, code: 'S1', isRegistrationOpen: true, isCurrent: true, startDate: '2026-01-01', endDate: '2026-06-30' }];
+  }, [semesters, isEditing, userToEdit]);
+
   const initialSemester = useMemo(() => {
     if (isEditing && userToEdit?.semester) {
       return userToEdit.semester;
     }
-    const hasSem1 = sortedSemesters.some((s) => s.number === 1);
-    if (hasSem1) return 1;
-    return sortedSemesters[0]?.number || 1;
-  }, [isEditing, userToEdit, sortedSemesters]);
+    if (!isEditing && admissionType === 'fresh') {
+      const sem1 = availableSemesters.find((s: Semester) => s.number === 1);
+      return sem1 ? 1 : availableSemesters[0]?.number || 1;
+    }
+    if (!isEditing && admissionType === 'transfer') {
+      const higherSem = availableSemesters.find((s: Semester) => s.number > 1) || availableSemesters[0];
+      return higherSem ? higherSem.number : 1;
+    }
+    return availableSemesters[0]?.number || 1;
+  }, [isEditing, userToEdit, availableSemesters, admissionType]);
 
   const [semester, setSemester] = useState<number>(initialSemester);
+
+  const handleSessionDateChange = (dateVal: string) => {
+    setSessionDate(dateVal);
+    if (dateVal) {
+      const yr = parseInt(dateVal.split('-')[0], 10);
+      if (!isNaN(yr) && yr >= 1990 && yr <= 2100) {
+        setSession(yr);
+      }
+    }
+  };
 
   // Initial roll number extraction (numeric digits for number input)
   const initialRoll = useMemo(() => {
@@ -215,6 +274,10 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
     const finalPrimaryDept = targetRole === 'teacher' ? selectedDepartments[0] : department;
     const finalDeptList = targetRole === 'teacher' ? selectedDepartments : [department];
 
+    const finalSemester = targetRole === 'student'
+      ? (admissionType === 'fresh' && !isEditing ? 1 : Number(semester))
+      : undefined;
+
     if (isEditing && userToEdit) {
       await adminUpdateUser(userToEdit.id, {
         name,
@@ -225,7 +288,9 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
         sessionYear: targetRole === 'student' ? Number(session) : undefined,
         rollNumber: finalRollNumber,
         designation: targetRole === 'teacher' ? designation : undefined,
-        semester: targetRole === 'student' ? Number(semester) : undefined,
+        semester: finalSemester,
+        admissionType: targetRole === 'student' ? admissionType : undefined,
+        academicStatus: targetRole === 'student' ? (userToEdit.academicStatus || 'active') : undefined,
         dob,
         phone,
         address,
@@ -243,7 +308,9 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
         sessionYear: targetRole === 'student' ? Number(session) : undefined,
         rollNumber: finalRollNumber,
         designation: targetRole === 'teacher' ? designation : undefined,
-        semester: targetRole === 'student' ? Number(semester) : undefined,
+        semester: finalSemester,
+        admissionType: targetRole === 'student' ? admissionType : undefined,
+        academicStatus: 'active',
         dob,
         phone,
         address,
@@ -557,90 +624,175 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
             )}
           </div>
 
-          {/* Student Specific: Session (Enrollment Year) & Semester */}
+          {/* Student Specific: Admission Type, Session (Enrollment Year) & Semester */}
           {targetRole === 'student' && (
-            <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
+            <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200 space-y-3.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Session Year & Academic Semester</span>
+                  <span>Admission Category & Academic Progression</span>
                 </span>
-                {!isEditing ? (
-                  <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <Lock className="w-3 h-3 text-indigo-500" />
-                    <span>Fixed for Initial Enrollment</span>
-                  </span>
-                ) : (
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                    Editable in Manage & Reset
-                  </span>
-                )}
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                  admissionType === 'fresh'
+                    ? 'bg-blue-50 text-blue-800 border-blue-200'
+                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                }`}>
+                  {admissionType === 'fresh' ? 'Fresh Entry (Sem 1 Locked)' : 'Transfer / Lateral Entry'}
+                </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Session (Enrollment Year) */}
+              {/* 1. Admission Type Selector */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1.5">
+                  Admission Type <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdmissionType('fresh');
+                      if (!isEditing) {
+                        const firstSem = availableSemesters.find((s: Semester) => s.number === 1) || availableSemesters[0];
+                        setSemester(firstSem ? firstSem.number : 1);
+                      }
+                    }}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                      admissionType === 'fresh'
+                        ? 'border-indigo-600 bg-indigo-50/70 ring-1 ring-indigo-600'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full mt-0.5 flex items-center justify-center border shrink-0 ${
+                      admissionType === 'fresh' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300 bg-white'
+                    }`}>
+                      {admissionType === 'fresh' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900 flex items-center gap-1">
+                        <span>Fresh Admission</span>
+                        <Lock className="w-3 h-3 text-slate-400" />
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                        Locks starting semester to <strong>Semester 1</strong> automatically.
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdmissionType('transfer');
+                      if (!isEditing) {
+                        const higherSem = availableSemesters.find((s: Semester) => s.number > 1) || availableSemesters[0];
+                        if (higherSem) setSemester(higherSem.number);
+                      }
+                    }}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                      admissionType === 'transfer'
+                        ? 'border-indigo-600 bg-indigo-50/70 ring-1 ring-indigo-600'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full mt-0.5 flex items-center justify-center border shrink-0 ${
+                      admissionType === 'transfer' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300 bg-white'
+                    }`}>
+                      {admissionType === 'transfer' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900">
+                        Transfer / Lateral Entry
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                        Select from available curriculum semesters.
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                {/* Session (Enrollment Year) - Handled via Calendar Picker */}
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                    <span>Session (Enrollment Year)</span>
-                    {!isEditing && <span className="text-[10px] text-slate-500">Current Year</span>}
+                    <span className="flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Session (Enrollment Year) <span className="text-rose-500">*</span></span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded">
+                      Extracted Year: {session}
+                    </span>
                   </label>
-                  {isEditing ? (
+
+                  {/* Calendar Date Picker with Current Date Selected by default */}
+                  <div className="relative">
                     <input
-                      type="number"
+                      type="date"
                       required
-                      min={2000}
-                      max={2050}
-                      value={session}
-                      onChange={(e) => setSession(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 font-mono"
+                      value={sessionDate}
+                      onChange={(e) => handleSessionDateChange(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 font-mono text-slate-800 font-semibold cursor-pointer shadow-2xs"
+                      title="Pick date from calendar to extract enrollment year"
                     />
-                  ) : (
-                    <div className="relative">
-                      <input
-                        type="number"
-                        readOnly
-                        disabled
-                        value={session}
-                        className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-300 rounded-md font-mono text-slate-700 cursor-not-allowed select-none"
-                      />
-                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-medium text-slate-500">
-                        Current Year ({currentYear})
-                      </span>
-                    </div>
-                  )}
-                  {!isEditing && (
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      New admissions are permanently linked to the active admission year ({currentYear}).
-                    </p>
-                  )}
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 mt-1 flex items-center justify-between">
+                    <span>Year <strong className="text-indigo-700 font-mono">{session}</strong> extracted from calendar.</span>
+                    <span className="text-indigo-600 font-medium">Applied to Roll & Email</span>
+                  </p>
                 </div>
 
-                {/* Semester */}
+                {/* Starting / Current Semester */}
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                    <span>Academic Semester</span>
-                    <span className="text-[10px] text-slate-500 font-mono">{sortedSemesters.length} Configured</span>
+                    <span>
+                      {admissionType === 'fresh' && !isEditing ? 'Starting Semester (Locked)' : 'Starting / Current Semester'}
+                    </span>
+                    {admissionType === 'fresh' && !isEditing ? (
+                      <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-200 flex items-center gap-1">
+                        <Lock className="w-2.5 h-2.5" />
+                        <span>Sem 1 Required</span>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {availableSemesters.length} Available
+                      </span>
+                    )}
                   </label>
-                  {sortedSemesters.length === 0 ? (
-                    <div className="p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800">
-                      No semesters configured. Please add a semester in the directory first.
+
+                  {admissionType === 'fresh' && !isEditing ? (
+                    /* Locked Semester 1 for Fresh Admission */
+                    <div className="relative">
+                      <div className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-300 rounded-md font-mono text-slate-700 flex items-center justify-between cursor-not-allowed select-none">
+                        <span className="font-semibold text-indigo-900">
+                          Semester {semester} ({availableSemesters.find((s: Semester) => s.number === semester)?.name || 'First Term'})
+                        </span>
+                        <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                      <p className="text-[10px] text-indigo-600 mt-1 flex items-center gap-1 font-medium">
+                        <Info className="w-3 h-3 shrink-0" />
+                        <span>Fresh admissions are strictly locked to Semester {semester}.</span>
+                      </p>
                     </div>
                   ) : (
-                    <select
-                      value={semester}
-                      onChange={(e) => setSemester(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 font-mono cursor-pointer"
-                    >
-                      {sortedSemesters.map((s) => (
-                        <option key={s.id} value={s.number}>
-                          Semester {s.number} ({s.name})
-                        </option>
-                      ))}
-                    </select>
+                    /* Unlocked Semester Selector for Transfer or Editing - ONLY shows available semesters */
+                    <div>
+                      <select
+                        value={semester}
+                        onChange={(e) => setSemester(Number(e.target.value))}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 font-mono cursor-pointer font-medium shadow-2xs"
+                      >
+                        {availableSemesters.map((sem: Semester) => (
+                          <option key={sem.id || sem.number} value={sem.number}>
+                            Semester {sem.number} ({sem.name})
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-emerald-600 mt-1 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 shrink-0" />
+                        <span>Showing {availableSemesters.length} available semester{availableSemesters.length === 1 ? '' : 's'} in active system.</span>
+                      </p>
+                    </div>
                   )}
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Synchronized with terms configured in the Academic Semesters Directory.
-                  </p>
                 </div>
               </div>
             </div>

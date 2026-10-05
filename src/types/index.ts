@@ -1,4 +1,6 @@
 export type Role = 'admin' | 'teacher' | 'student';
+export type AdmissionType = 'fresh' | 'transfer';
+export type AcademicStatus = 'active' | 'detained' | 'repeat' | 'graduated';
 
 export interface User {
   id: string;
@@ -13,6 +15,8 @@ export interface User {
   sessionYear?: number; // Alias for session
   designation?: string; // For teachers, e.g. Associate Professor
   semester?: number; // Current semester for student, e.g. 5
+  admissionType?: AdmissionType; // 'fresh' or 'transfer'
+  academicStatus?: AcademicStatus; // 'active' | 'detained' | 'repeat' | 'graduated'
   cgpa?: number;
   creditsEarned?: number;
   password?: string;
@@ -31,6 +35,38 @@ export interface Semester {
   startDate: string;
   endDate: string;
   isCurrent: boolean;
+  isFinalResultsPublished?: boolean;
+  finalResultsPublishedAt?: string;
+}
+
+export interface SemesterProgressionAuditLog {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentRollNumber?: string;
+  adminId: string;
+  adminName: string;
+  previousSemester: number;
+  newSemester: number;
+  previousStatus?: AcademicStatus;
+  newStatus?: AcademicStatus;
+  reason: string;
+  timestamp: string;
+}
+
+export interface PromotionEvaluationResult {
+  studentId: string;
+  studentName: string;
+  rollNumber?: string;
+  department: string;
+  currentSemester: number;
+  nextSemester: number;
+  gpa: number;
+  creditsAttempted: number;
+  creditsPassed: number;
+  passed: boolean;
+  decision: 'promoted' | 'detained' | 'graduated';
+  reason: string;
 }
 
 export interface Course {

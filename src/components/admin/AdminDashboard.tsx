@@ -3,6 +3,9 @@ import { useLms } from '../../context/LmsContext';
 import { Course, Semester, User, Department } from '../../types';
 import { AdminUserModal } from './AdminUserModal';
 import { AdminDepartmentModal } from './AdminDepartmentModal';
+import { StudentSemesterOverrideModal } from './StudentSemesterOverrideModal';
+import { SemesterPromotionModal } from './SemesterPromotionModal';
+import { ProgressionAuditTrail } from './ProgressionAuditTrail';
 import {
   formatStudentRollNumber,
   getFacultyHodBadge,
@@ -30,6 +33,7 @@ import {
   ShieldAlert,
   UserCheck,
   Sparkles,
+  Crown,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -91,15 +95,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [selectedSemesterFilter, setSelectedSemesterFilter] = useState<string>('all');
   const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [facultySearchQuery, setFacultySearchQuery] = useState('');
+  const [facultyDeptFilter, setFacultyDeptFilter] = useState<string>('all');
+  const [facultyHodFilter, setFacultyHodFilter] = useState<'all' | 'hod_only' | 'non_hod'>('all');
   const [departmentSearchQuery, setDepartmentSearchQuery] = useState('');
-  const [internalTab, setInternalTab] = useState<'analytics' | 'courses' | 'faculty' | 'students' | 'departments'>('analytics');
 
-  const currentTab: 'analytics' | 'courses' | 'faculty' | 'students' | 'departments' =
-    (propActiveTab && ['analytics', 'courses', 'faculty', 'students', 'departments'].includes(propActiveTab))
-      ? (propActiveTab as 'analytics' | 'courses' | 'faculty' | 'students' | 'departments')
+  // Student Filter & Search states
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | 'active' | 'detained' | 'graduated'>('all');
+  const [studentSemesterFilter, setStudentSemesterFilter] = useState<string>('all');
+  const [studentDeptFilter, setStudentDeptFilter] = useState<string>('all');
+
+  // Semester Progression Modals
+  const [studentForOverride, setStudentForOverride] = useState<User | null>(null);
+  const [semesterForPromotion, setSemesterForPromotion] = useState<Semester | null>(null);
+
+  const availableSemesters = useMemo(() => {
+    return [...semesters].sort((a, b) => a.number - b.number);
+  }, [semesters]);
+
+  type AdminTab = 'analytics' | 'courses' | 'faculty' | 'students' | 'departments' | 'audit';
+  const [internalTab, setInternalTab] = useState<AdminTab>('analytics');
+
+  const currentTab: AdminTab =
+    (propActiveTab && ['analytics', 'courses', 'faculty', 'students', 'departments', 'audit'].includes(propActiveTab))
+      ? (propActiveTab as AdminTab)
       : internalTab;
 
-  const handleTabChange = (tab: 'analytics' | 'courses' | 'faculty' | 'students' | 'departments') => {
+  const handleTabChange = (tab: AdminTab) => {
     setInternalTab(tab);
     if (propSetActiveTab) {
       propSetActiveTab(tab);
@@ -437,6 +460,99 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   }, [departments, selectedDepartmentFilter]);
 
+  // Filtered faculty based on department, HOD status, and search query
+  const filteredFaculty = teachers.filter((t) => {
+    // 1. Department filter
+    let matchesDept = true;
+    if (facultyDeptFilter !== 'all') {
+      const teacherDepts = t.departments && t.departments.length > 0 ? t.departments : (t.department ? [t.department] : []);
+      matchesDept = teacherDepts.includes(facultyDeptFilter);
+    }
+
+    // 2. HOD filter
+    let matchesHod = true;
+    const isHod = departments.some((d) => d.hodId === t.id);
+    if (facultyHodFilter === 'hod_only') {
+      matchesHod = isHod;
+    } else if (facultyHodFilter === 'non_hod') {
+      matchesHod = !isHod;
+    }
+
+    // 3. Search query
+    let matchesSearch = true;
+    if (facultySearchQuery.trim()) {
+      const q = facultySearchQuery.toLowerCase();
+      const teacherDepts = t.departments && t.departments.length > 0 ? t.departments : (t.department ? [t.department] : []);
+      const assigned = courses.filter((c) => c.teacherId === t.id);
+      const hodBadge = getFacultyHodBadge(t.id, departments) || '';
+
+      matchesSearch =
+        t.name.toLowerCase().includes(q) ||
+        t.email.toLowerCase().includes(q) ||
+        (t.designation ? t.designation.toLowerCase().includes(q) : false) ||
+        (t.phone ? t.phone.toLowerCase().includes(q) : false) ||
+        teacherDepts.some((d) => d.toLowerCase().includes(q)) ||
+        hodBadge.toLowerCase().includes(q) ||
+        assigned.some((c) => c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q));
+    }
+
+    return matchesDept && matchesHod && matchesSearch;
+  });
+
+  // Automatically reset faculty department filter if selected department is deleted
+  useEffect(() => {
+    if (facultyDeptFilter !== 'all' && !departments.some((d) => d.name === facultyDeptFilter)) {
+      setFacultyDeptFilter('all');
+    }
+  }, [departments, facultyDeptFilter]);
+
+  // Filtered Students with Department, Academic Status, Semester, and Keyword Search
+  const filteredStudents = useMemo(() => {
+    return students.filter((s) => {
+      // 1. Department filter
+      let matchesDept = true;
+      if (studentDeptFilter !== 'all') {
+        const sDepts = getUserDepartments(s);
+        matchesDept = sDepts.includes(studentDeptFilter);
+      }
+
+      // 2. Academic Status filter
+      let matchesStatus = true;
+      if (studentStatusFilter !== 'all') {
+        const curStatus = s.academicStatus || 'active';
+        matchesStatus = curStatus === studentStatusFilter;
+      }
+
+      // 3. Semester filter
+      let matchesSemester = true;
+      if (studentSemesterFilter !== 'all') {
+        matchesSemester = String(s.semester || 1) === studentSemesterFilter;
+      }
+
+      // 4. Keyword search
+      let matchesSearch = true;
+      if (studentSearchQuery.trim()) {
+        const q = studentSearchQuery.toLowerCase();
+        const primaryDept = getUserPrimaryDepartment(s);
+        const completeRoll = formatStudentRollNumber(s.session || s.sessionYear, primaryDept, s.rollNumber).toLowerCase();
+        matchesSearch =
+          s.name.toLowerCase().includes(q) ||
+          s.email.toLowerCase().includes(q) ||
+          completeRoll.includes(q) ||
+          (s.rollNumber ? s.rollNumber.toLowerCase().includes(q) : false);
+      }
+
+      return matchesDept && matchesStatus && matchesSemester && matchesSearch;
+    });
+  }, [students, studentDeptFilter, studentStatusFilter, studentSemesterFilter, studentSearchQuery, departments]);
+
+  // Reset student department filter if deleted
+  useEffect(() => {
+    if (studentDeptFilter !== 'all' && !departments.some((d) => d.name === studentDeptFilter)) {
+      setStudentDeptFilter('all');
+    }
+  }, [departments, studentDeptFilter]);
+
   return (
     <div className="space-y-6">
       {/* Toast Notification */}
@@ -739,13 +855,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <th className="py-2.5 px-4 text-center">Registration Window</th>
                     <th className="py-2.5 px-4 text-center">Current Term</th>
                     <th className="py-2.5 px-4 text-center">Courses Offered</th>
+                    <th className="py-2.5 px-4 text-center">Batch Promotion</th>
                     <th className="py-2.5 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {sortedSemesters.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-8 text-center text-slate-400">
+                      <td colSpan={9} className="py-8 text-center text-slate-400">
                         No semesters configured. Click "+ Add Semester" to get started.
                       </td>
                     </tr>
@@ -803,6 +920,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </td>
                           <td className="py-2.5 px-4 text-center font-mono font-semibold text-slate-700">
                             {semCourses.length} {semCourses.length === 1 ? 'course' : 'courses'}
+                          </td>
+                          {/* Batch Promotion Column */}
+                          <td className="py-2.5 px-4 text-center">
+                            {sem.isFinalResultsPublished ? (
+                              <div className="inline-flex flex-col items-center gap-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  <span>Results Published</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setSemesterForPromotion(sem)}
+                                  className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold hover:underline cursor-pointer"
+                                >
+                                  View Promotion Report
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setSemesterForPromotion(sem)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold text-white bg-slate-900 hover:bg-slate-800 hover:scale-[1.02] active:scale-95 transition-all shadow-2xs cursor-pointer whitespace-nowrap"
+                                title="Declare final examination results and trigger automated semester promotion batch"
+                              >
+                                <Sparkles className="w-3 h-3 text-indigo-400" />
+                                <span>Declare Results & Promote</span>
+                              </button>
+                            )}
                           </td>
                           <td className="py-2.5 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
@@ -1086,11 +1231,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <div className="bg-white rounded-lg border border-slate-200 shadow-2xs overflow-hidden animate-fade-in-up">
           <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">
-                Appointed University Faculty
-              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Users className="w-4 h-4 text-indigo-600 shrink-0" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Appointed University Faculty Directory
+                </h3>
+                <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                  {filteredFaculty.length !== teachers.length
+                    ? `${filteredFaculty.length} of ${teachers.length} Faculty Filtered`
+                    : `${teachers.length} Active Instructors`}
+                </span>
+              </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                {teachers.length} Active Instructors · Manage faculty profiles and reset credentials
+                Manage university academic professors, HOD appointments, department affiliations, and course assignments.
               </p>
             </div>
             <button
@@ -1108,108 +1261,259 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-            {teachers.map((t) => {
-              const assigned = courses.filter((c) => c.teacherId === t.id);
-              const facultyHodBadge = getFacultyHodBadge(t.id, departments);
-              const teacherDepts = t.departments && t.departments.length > 0 ? t.departments : [t.department];
-
-              return (
-                <div
-                  key={t.id}
-                  className="p-4 rounded-xl border border-slate-200 bg-white hover:-translate-y-1 hover:shadow-md hover:border-blue-300 transition-all duration-200 flex flex-col justify-between group"
+          {/* Filter Bar: Filter Department, Filter HOD, and Real-time Search */}
+          <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 flex-wrap flex-1 min-w-0">
+              {/* Filter Department */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-xs font-medium text-slate-600 whitespace-nowrap">Filter Department:</span>
+                <select
+                  value={facultyDeptFilter}
+                  onChange={(e) => setFacultyDeptFilter(e.target.value)}
+                  className="text-xs font-semibold bg-white border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors cursor-pointer"
                 >
-                  <div className="flex items-start gap-3.5">
-                    <img
-                      src={
-                        t.avatar ||
-                        `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                          t.name
-                        )}&background=0F172A&color=fff`
-                      }
-                      alt={t.name}
-                      className="w-11 h-11 rounded-full object-cover border border-slate-300 shrink-0 group-hover:border-blue-500 transition-colors"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <h4 className="text-xs font-bold text-slate-900 group-hover:text-blue-900 transition-colors">{t.name}</h4>
-                          {facultyHodBadge && (
-                            <span className="text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.2 rounded font-mono shadow-2xs">
-                              👑 {facultyHodBadge}
+                  <option value="all">All Departments ({teachers.length})</option>
+                  {departments.map((d) => {
+                    const deptCount = teachers.filter((t) => {
+                      const depts = t.departments && t.departments.length > 0 ? t.departments : (t.department ? [t.department] : []);
+                      return depts.includes(d.name);
+                    }).length;
+                    return (
+                      <option key={d.id} value={d.name}>
+                        {d.name} ({d.code.toUpperCase()}) - {deptCount} {deptCount === 1 ? 'faculty' : 'faculty'}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* Filter HOD */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-xs font-medium text-slate-600 whitespace-nowrap">Filter HOD:</span>
+                <select
+                  value={facultyHodFilter}
+                  onChange={(e) => setFacultyHodFilter(e.target.value as 'all' | 'hod_only' | 'non_hod')}
+                  className="text-xs font-semibold bg-white border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors cursor-pointer"
+                >
+                  <option value="all">All Faculty ({teachers.length})</option>
+                  <option value="hod_only">
+                    👑 Heads of Department Only ({teachers.filter((t) => departments.some((d) => d.hodId === t.id)).length})
+                  </option>
+                  <option value="non_hod">
+                    Faculty Members Only ({teachers.filter((t) => !departments.some((d) => d.hodId === t.id)).length})
+                  </option>
+                </select>
+              </div>
+
+              {/* Reset Filters Button */}
+              {(facultyDeptFilter !== 'all' || facultyHodFilter !== 'all' || facultySearchQuery) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFacultyDeptFilter('all');
+                    setFacultyHodFilter('all');
+                    setFacultySearchQuery('');
+                  }}
+                  className="text-[11px] font-semibold text-rose-600 hover:text-rose-800 hover:underline px-1.5 py-1 cursor-pointer transition-colors shrink-0"
+                  title="Reset faculty filters"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            {/* Non-collapsible Search Box */}
+            <div className="relative w-full sm:w-72 shrink-0 min-w-[200px]">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search name, email, designation, dept..."
+                value={facultySearchQuery}
+                onChange={(e) => setFacultySearchQuery(e.target.value)}
+                className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-indigo-500 hover:border-slate-400 transition-colors"
+              />
+              {facultySearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setFacultySearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                  title="Clear search"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Faculty Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                  <th className="py-2.5 px-4">Faculty Member</th>
+                  <th className="py-2.5 px-3">Department Affiliation</th>
+                  <th className="py-2.5 px-3">Designation & Leadership</th>
+                  <th className="py-2.5 px-3">Assigned Semester Courses</th>
+                  <th className="py-2.5 px-3">Contact & Details</th>
+                  <th className="py-2.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredFaculty.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-slate-400">
+                      <div>No faculty members found matching selected filters or search query.</div>
+                      {(facultyDeptFilter !== 'all' || facultyHodFilter !== 'all' || facultySearchQuery) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFacultyDeptFilter('all');
+                            setFacultyHodFilter('all');
+                            setFacultySearchQuery('');
+                          }}
+                          className="mt-2 text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline cursor-pointer"
+                        >
+                          Clear all filters
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ) : (
+                  filteredFaculty.map((t) => {
+                    const assigned = courses.filter((c) => c.teacherId === t.id);
+                    const facultyHodBadge = getFacultyHodBadge(t.id, departments);
+                    const teacherDepts = t.departments && t.departments.length > 0 ? t.departments : (t.department ? [t.department] : []);
+                    const isHod = departments.some((d) => d.hodId === t.id);
+
+                    return (
+                      <tr key={t.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
+                        {/* Faculty Profile */}
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={
+                                t.avatar ||
+                                `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                                  t.name
+                                )}&background=0F172A&color=fff`
+                              }
+                              alt={t.name}
+                              className="w-9 h-9 rounded-full object-cover border border-slate-200 shrink-0 group-hover:border-indigo-400 transition-colors"
+                            />
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-900 group-hover:text-indigo-900 transition-colors flex items-center gap-1.5 flex-wrap">
+                                <span>{t.name}</span>
+                                {isHod && (
+                                  <span className="text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.2 rounded font-mono shadow-2xs">
+                                    👑 HOD
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-500 font-mono">{t.email}</div>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Departments */}
+                        <td className="py-3 px-3">
+                          <div className="flex flex-wrap gap-1 max-w-xs">
+                            {teacherDepts.length === 0 ? (
+                              <span className="text-slate-400 italic text-[11px]">Unassigned</span>
+                            ) : (
+                              teacherDepts.map((dName) => (
+                                <span
+                                  key={dName}
+                                  className="text-[10px] font-medium text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-sans"
+                                >
+                                  {dName}
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Designation & Leadership */}
+                        <td className="py-3 px-3">
+                          <div className="flex flex-col items-start gap-1">
+                            <span className="text-[10px] font-semibold uppercase text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                              {t.designation || 'Faculty'}
                             </span>
-                          )}
-                        </div>
-                        <span className="text-[10px] font-semibold uppercase text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
-                          {t.designation || 'Faculty'}
-                        </span>
-                      </div>
-                      {/* Department badges */}
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {teacherDepts.map((dName) => (
-                          <span
-                            key={dName}
-                            className="text-[10px] font-medium text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded font-sans"
-                          >
-                            {dName}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="text-[11px] text-slate-500 font-mono mt-1">{t.email}</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">
-                        DOB: {t.dob || '1980-01-01'} · Phone: {t.phone || 'N/A'}
-                      </div>
-
-                      <div className="mt-3 pt-2 border-t border-slate-200/80">
-                        <div className="text-[11px] font-semibold text-slate-700">
-                          Assigned Semester Courses ({assigned.length}):
-                        </div>
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {assigned.length === 0 ? (
-                            <span className="text-[11px] text-slate-400 italic">No courses assigned</span>
-                          ) : (
-                            assigned.map((crs) => (
-                              <span
-                                key={crs.id}
-                                className="text-[11px] font-semibold text-slate-700 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded hover:border-slate-300 transition-colors"
-                              >
-                                {crs.code} · {crs.creditHours} Cr
+                            {facultyHodBadge ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded font-mono shadow-2xs">
+                                <Crown className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>{facultyHodBadge}</span>
                               </span>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-400">Regular Faculty</span>
+                            )}
+                          </div>
+                        </td>
 
-                  {/* Actions Bar for Faculty */}
-                  <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-end gap-2 text-xs">
-                    <button
-                      onClick={() =>
-                        setUserModalState({
-                          isOpen: true,
-                          userToEdit: t,
-                          roleToCreate: null,
-                        })
-                      }
-                      className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 hover:text-slate-900 border border-slate-300 rounded shadow-2xs hover:scale-[1.02] active:scale-95 flex items-center gap-1 transition-all cursor-pointer"
-                    >
-                      <Edit2 className="w-3 h-3 text-slate-500" />
-                      <span>Manage & Reset</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setUserToDelete(t)}
-                      className="px-2.5 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded shadow-2xs hover:scale-[1.02] active:scale-95 flex items-center gap-1 transition-all cursor-pointer"
-                      title={`Permanently delete faculty member ${t.name}`}
-                    >
-                      <Trash2 className="w-3 h-3 text-rose-600" />
-                      <span>Delete</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+                        {/* Assigned Courses */}
+                        <td className="py-3 px-3">
+                          <div className="max-w-xs">
+                            <div className="text-[11px] font-medium text-slate-700">
+                              {assigned.length} {assigned.length === 1 ? 'Course' : 'Courses'}
+                            </div>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {assigned.length === 0 ? (
+                                <span className="text-slate-400 italic text-[11px]">None assigned</span>
+                              ) : (
+                                assigned.map((crs) => (
+                                  <span
+                                    key={crs.id}
+                                    className="text-[10px] font-semibold text-slate-700 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded font-mono hover:border-slate-300 transition-colors"
+                                    title={`${crs.title} · ${crs.creditHours} Credits`}
+                                  >
+                                    {crs.code} ({crs.creditHours} Cr)
+                                  </span>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Contact & Personal */}
+                        <td className="py-3 px-3">
+                          <div className="text-[11px] text-slate-600">
+                            <div>Phone: <span className="font-mono text-slate-700">{t.phone || 'N/A'}</span></div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">DOB: {t.dob || '1980-01-01'}</div>
+                          </div>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() =>
+                                setUserModalState({
+                                  isOpen: true,
+                                  userToEdit: t,
+                                  roleToCreate: null,
+                                })
+                              }
+                              className="px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 hover:text-slate-900 border border-slate-300 rounded shadow-2xs hover:scale-[1.02] active:scale-95 flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                              title="Edit profile & reset password"
+                            >
+                              <Edit2 className="w-3 h-3 text-slate-500" />
+                              <span>Manage & Reset</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setUserToDelete(t)}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-all hover:scale-110 active:scale-95 cursor-pointer"
+                              title={`Delete faculty member ${t.name}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -1217,15 +1521,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* Tab 4: Student Directory */}
       {currentTab === 'students' && (
         <div className="bg-white rounded-lg border border-slate-200 shadow-2xs overflow-hidden animate-fade-in-up">
+          {/* Header Bar */}
           <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Registered University Students Roster
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <GraduationCap className="w-4 h-4 text-indigo-600" />
+                  <span>Registered University Students Roster</span>
                 </h3>
-                <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full font-mono">
+                  {filteredStudents.length !== students.length
+                    ? `${filteredStudents.length} of ${students.length} Students Filtered`
+                    : `${students.length} Students Registered`}
+                </span>
+                <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full flex items-center gap-1 font-mono">
                   <span>Domain:</span>
-                  <strong className="font-mono">@{adminEmail.split('@')[1] || 'nicore.edu.pk'}</strong>
+                  <strong className="text-indigo-900">@{adminEmail.split('@')[1] || 'nicore.edu.pk'}</strong>
                 </span>
                 <button
                   type="button"
@@ -1237,7 +1548,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                {students.length} Enrolled Candidates · Unique roll verified per session & semester · Add 1st sem candidates or Manage & Reset
+                University student registry with semester progression tracking, academic status enforcement, admission category rules, and Super Admin manual override.
               </p>
             </div>
             <button
@@ -1255,94 +1566,282 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </button>
           </div>
 
+          {/* Filter Bar: Status, Semester, Department & Real-Time Search */}
+          <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 flex-wrap flex-1 min-w-0">
+              {/* Academic Status Filter */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <label className="text-xs font-semibold text-slate-600 whitespace-nowrap">Status:</label>
+                <select
+                  value={studentStatusFilter}
+                  onChange={(e) => setStudentStatusFilter(e.target.value as any)}
+                  className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-md font-semibold text-slate-700 cursor-pointer focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                >
+                  <option value="all">All Academic Statuses ({students.length})</option>
+                  <option value="active">Active ({students.filter((s) => (s.academicStatus || 'active') === 'active').length})</option>
+                  <option value="detained">Detained / Repeat ({students.filter((s) => s.academicStatus === 'detained' || s.academicStatus === 'repeat').length})</option>
+                  <option value="graduated">Graduated ({students.filter((s) => s.academicStatus === 'graduated').length})</option>
+                </select>
+              </div>
+
+              {/* Semester Filter */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <label className="text-xs font-semibold text-slate-600 whitespace-nowrap">Semester:</label>
+                <select
+                  value={studentSemesterFilter}
+                  onChange={(e) => setStudentSemesterFilter(e.target.value)}
+                  className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-md font-semibold text-slate-700 cursor-pointer focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                >
+                  <option value="all">All Semesters</option>
+                  {availableSemesters.map((s) => {
+                    const count = students.filter((st) => (st.semester || 1) === s.number).length;
+                    return (
+                      <option key={s.id || s.number} value={String(s.number)}>
+                        Semester {s.number} ({s.name}) [{count}]
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* Department Filter */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <label className="text-xs font-semibold text-slate-600 whitespace-nowrap">Department:</label>
+                <select
+                  value={studentDeptFilter}
+                  onChange={(e) => setStudentDeptFilter(e.target.value)}
+                  className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-md font-semibold text-slate-700 cursor-pointer focus:ring-1 focus:ring-indigo-500 shadow-2xs max-w-[200px] truncate"
+                >
+                  <option value="all">All Departments ({departments.length})</option>
+                  {departments.map((d) => {
+                    const count = students.filter((s) => {
+                      const depts = getUserDepartments(s);
+                      return depts.includes(d.name);
+                    }).length;
+                    return (
+                      <option key={d.id} value={d.name}>
+                        {d.name} ({count})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* Clear filters button */}
+              {(studentStatusFilter !== 'all' || studentSemesterFilter !== 'all' || studentDeptFilter !== 'all' || studentSearchQuery) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStudentStatusFilter('all');
+                    setStudentSemesterFilter('all');
+                    setStudentDeptFilter('all');
+                    setStudentSearchQuery('');
+                  }}
+                  className="px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-200 rounded transition-colors cursor-pointer shrink-0"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            {/* Search Input */}
+            <div className="relative shrink-0 w-full sm:w-64">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search name, roll, or email..."
+                value={studentSearchQuery}
+                onChange={(e) => setStudentSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+              />
+              {studentSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setStudentSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Students Table */}
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
-                  <th className="py-2.5 px-3">University Roll Number (year-dept-roll)</th>
-                  <th className="py-2.5 px-3">Student Name</th>
+                  <th className="py-2.5 px-3">University Roll Number</th>
+                  <th className="py-2.5 px-3">Student Candidate</th>
                   <th className="py-2.5 px-3">Department & Degree</th>
                   <th className="py-2.5 px-2 text-center">Session</th>
                   <th className="py-2.5 px-2 text-center">Semester</th>
-                  <th className="py-2.5 px-2 text-center">DOB</th>
+                  <th className="py-2.5 px-2 text-center">Academic Status</th>
                   <th className="py-2.5 px-2 text-center">CGPA</th>
                   <th className="py-2.5 px-3">Official Institutional Email</th>
-                  <th className="py-2.5 px-3 text-right">Actions</th>
+                  <th className="py-2.5 px-3 text-right">Administrative Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {students.map((s) => {
-                  const studentDept = getUserPrimaryDepartment(s);
-                  return (
-                    <tr key={s.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
-                      <td className="py-3 px-3 font-mono">
-                        <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded font-bold text-slate-900 group-hover:bg-indigo-50 group-hover:border-indigo-300 group-hover:text-indigo-700 transition-colors">
-                          {formatStudentRollNumber(s.session || s.sessionYear, studentDept, s.rollNumber)}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="flex items-center gap-2">
-                          <img
-                            src={
-                              s.avatar ||
-                              `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                                s.name
-                              )}&background=0F172A&color=fff`
-                            }
-                            alt={s.name}
-                            className="w-6 h-6 rounded-full object-cover border border-slate-200"
-                          />
-                          <span className="font-semibold text-slate-900">{s.name}</span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-slate-700">BS {studentDept}</td>
-                    <td className="py-3 px-2 text-center font-mono font-semibold text-indigo-700">
-                      <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded text-[11px]">
-                        {s.session || s.sessionYear || 2026}
-                      </span>
-                    </td>
-                    <td className="py-3 px-2 text-center font-mono font-medium text-slate-800">
-                      Sem {s.semester || 1}
-                    </td>
-                    <td className="py-3 px-2 text-center font-mono text-slate-500 text-[11px]">
-                      {s.dob || '2003-01-01'}
-                    </td>
-                    <td className="py-3 px-2 text-center font-mono font-bold text-indigo-700">
-                      {(s.cgpa || 3.75).toFixed(2)}
-                    </td>
-                    <td className="py-3 px-3 text-slate-600 font-mono text-[11px]">
-                      <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded font-semibold text-indigo-900">
-                        {s.email}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() =>
-                            setUserModalState({
-                              isOpen: true,
-                              userToEdit: s,
-                              roleToCreate: null,
-                            })
-                          }
-                          className="px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded shadow-2xs hover:scale-[1.02] active:scale-95 inline-flex items-center gap-1 transition-all cursor-pointer"
-                        >
-                          <Edit2 className="w-3 h-3 text-slate-500" />
-                          <span>Manage</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setUserToDelete(s)}
-                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded border border-transparent hover:border-rose-200 transition-colors cursor-pointer"
-                          title={`Permanently delete student ${s.name}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                {filteredStudents.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-10 text-center text-slate-400">
+                      <div>No students found matching selected filters or search query.</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStudentStatusFilter('all');
+                          setStudentSemesterFilter('all');
+                          setStudentDeptFilter('all');
+                          setStudentSearchQuery('');
+                        }}
+                        className="mt-2 text-xs font-semibold text-indigo-600 hover:underline cursor-pointer"
+                      >
+                        Clear all student filters
+                      </button>
                     </td>
                   </tr>
-                );
-              })}
+                ) : (
+                  filteredStudents.map((s) => {
+                    const studentDept = getUserPrimaryDepartment(s);
+                    const isDetained = s.academicStatus === 'detained' || s.academicStatus === 'repeat';
+                    const isGraduated = s.academicStatus === 'graduated';
+                    const isFresh = s.admissionType !== 'transfer';
+
+                    return (
+                      <tr key={s.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
+                        {/* Roll Number */}
+                        <td className="py-3 px-3 font-mono">
+                          <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded font-bold text-slate-900 group-hover:bg-indigo-50 group-hover:border-indigo-300 group-hover:text-indigo-700 transition-colors">
+                            {formatStudentRollNumber(s.session || s.sessionYear, studentDept, s.rollNumber)}
+                          </span>
+                        </td>
+
+                        {/* Student Name & Admission Category */}
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={
+                                s.avatar ||
+                                `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                                  s.name
+                                )}&background=0F172A&color=fff`
+                              }
+                              alt={s.name}
+                              className="w-7 h-7 rounded-full object-cover border border-slate-200 shrink-0"
+                            />
+                            <div>
+                              <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                                <span>{s.name}</span>
+                                <span
+                                  className={`text-[9px] font-bold font-mono uppercase px-1 py-0.2 rounded border ${
+                                    isFresh
+                                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                                  }`}
+                                  title={isFresh ? 'Fresh intake student (Started at Sem 1)' : 'Transfer / Lateral entry student'}
+                                >
+                                  {isFresh ? 'Fresh' : 'Transfer'}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-400">DOB: {s.dob || '2003-01-01'}</div>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Department */}
+                        <td className="py-3 px-3 text-slate-700 font-medium">BS {studentDept}</td>
+
+                        {/* Session */}
+                        <td className="py-3 px-2 text-center font-mono font-semibold text-indigo-700">
+                          <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded text-[11px]">
+                            {s.session || s.sessionYear || 2026}
+                          </span>
+                        </td>
+
+                        {/* Semester */}
+                        <td className="py-3 px-2 text-center font-mono font-bold text-slate-800">
+                          Sem {s.semester || 1}
+                        </td>
+
+                        {/* Academic Status Badge */}
+                        <td className="py-3 px-2 text-center">
+                          {isDetained ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-rose-100 text-rose-800 border border-rose-300">
+                              <AlertCircle className="w-2.5 h-2.5 text-rose-600 shrink-0" />
+                              <span>Detained</span>
+                            </span>
+                          ) : isGraduated ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-purple-100 text-purple-800 border border-purple-300">
+                              <GraduationCap className="w-2.5 h-2.5 text-purple-600 shrink-0" />
+                              <span>Graduated</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                              <span>Active</span>
+                            </span>
+                          )}
+                        </td>
+
+                        {/* CGPA */}
+                        <td className="py-3 px-2 text-center font-mono font-bold text-indigo-700">
+                          {(s.cgpa || 3.75).toFixed(2)}
+                        </td>
+
+                        {/* Institutional Email */}
+                        <td className="py-3 px-3 text-slate-600 font-mono text-[11px]">
+                          <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded font-semibold text-indigo-900">
+                            {s.email}
+                          </span>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3 px-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5 flex-nowrap">
+                            {/* Super Admin Override Semester Button */}
+                            <button
+                              type="button"
+                              onClick={() => setStudentForOverride(s)}
+                              className="px-2 py-1 text-[11px] font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded shadow-2xs hover:scale-[1.02] active:scale-95 inline-flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                              title="Super Admin Manual Semester Override with Mandatory Audit Trail"
+                            >
+                              <ShieldAlert className="w-3 h-3 text-amber-600" />
+                              <span>Override Semester</span>
+                            </button>
+
+                            {/* Manage & Reset Credentials */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setUserModalState({
+                                  isOpen: true,
+                                  userToEdit: s,
+                                  roleToCreate: null,
+                                })
+                              }
+                              className="px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded shadow-2xs hover:scale-[1.02] active:scale-95 inline-flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                              title="Edit profile & reset password"
+                            >
+                              <Edit2 className="w-3 h-3 text-slate-500" />
+                              <span>Manage</span>
+                            </button>
+
+                            {/* Delete */}
+                            <button
+                              type="button"
+                              onClick={() => setUserToDelete(s)}
+                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded border border-transparent hover:border-rose-200 transition-colors cursor-pointer"
+                              title={`Permanently delete student ${s.name}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -1549,6 +2048,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             })}
           </div>
         </div>
+      )}
+
+      {/* Tab 6: Progression & Manual Override Audit Trail */}
+      {currentTab === 'audit' && (
+        <ProgressionAuditTrail />
       )}
 
       {/* Modal: Add / Edit Course */}
@@ -2197,6 +2701,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               departmentToEdit: null,
             })
           }
+        />
+      )}
+
+      {/* Modal: Super Admin Manual Semester Override */}
+      {studentForOverride && (
+        <StudentSemesterOverrideModal
+          student={studentForOverride}
+          isOpen={Boolean(studentForOverride)}
+          onClose={() => setStudentForOverride(null)}
+          onSuccess={(audit) => {
+            setDeleteToast(`Successfully updated ${studentForOverride.name}'s semester to Semester ${audit?.newSemester || 'new'}. Status synchronized to ${audit?.newStatus || 'active'}.`);
+            setTimeout(() => setDeleteToast(null), 4000);
+          }}
+        />
+      )}
+
+      {/* Modal: Automated Semester Promotion Engine */}
+      {semesterForPromotion && (
+        <SemesterPromotionModal
+          semester={semesterForPromotion}
+          isOpen={Boolean(semesterForPromotion)}
+          onClose={() => setSemesterForPromotion(null)}
+          onSuccess={() => {
+            setDeleteToast(`Batch evaluation and semester progression engine executed for ${semesterForPromotion.name}.`);
+            setTimeout(() => setDeleteToast(null), 4000);
+          }}
         />
       )}
     </div>

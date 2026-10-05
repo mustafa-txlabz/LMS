@@ -186,20 +186,137 @@ and appointed Heads of Department (HOD).
   student admission forms.
 
 --------------------------------------------------------------------------------
-2.5 FACULTY & STUDENT ROSTERS
+2.5 APPOINTED UNIVERSITY FACULTY DIRECTORY (TABLE VIEW & FILTERS)
 --------------------------------------------------------------------------------
-- Faculty Roster: View faculty appointments, academic designations, HOD status, 
-  and assigned courses. Reset passwords or manage department affiliations.
-- Student Roster: Enroll new student candidates.
-  * Roll Number: Generated following the institutional standard: 
-    `<AdmissionYear>-<DeptCode>-<NumericDigits>` (e.g., 2026-cs-01).
-  * Institutional Email: Automatically generated using the university domain 
-    (e.g., 2026-cs-01@nicore.edu.pk).
-  * Semester selection: Bound strictly to configured semesters in the directory.
-  * Reset Password: Administrator can reset any student or teacher password.
+Located in the "Faculty Roster" tab of the Admin Dashboard. Faculty members are 
+presented in a structured, high-density academic directory table.
+
+A. TABLE COLUMNS:
+   - Faculty Member: Photo avatar, full name, official email, and HOD status.
+   - Department Affiliation: Badges indicating all associated university faculties.
+   - Designation & Leadership: Academic title (e.g., Professor, Assistant Professor,
+     Lecturer) and distinctive Crown badge for appointed Heads of Department (e.g., 👑 HOD CS).
+   - Assigned Semester Courses: Live list of assigned course codes, credit hours, 
+     and total assigned course counts.
+   - Contact & Details: Official phone extension and recorded date of birth.
+   - Actions: "Manage & Reset" (for updating profiles and resetting credentials) 
+     and "Delete" (with security confirmation dialog).
+
+B. MULTI-CRITERIA FACULTY FILTERING:
+   - "Filter Department:" Dropdown listing all active university departments with 
+     live faculty headcounts. Filters directory to instructors belonging to that faculty.
+   - "Filter HOD:" Dropdown with 3 selection modes:
+     * "All Faculty": Shows all instructors regardless of administrative appointment.
+     * "👑 Heads of Department Only": Filters to faculty members currently serving as HOD.
+     * "Faculty Members Only": Filters to professors and lecturers without HOD duties.
+   - "Reset Filters": Dedicated shortcut button to restore all filters and queries.
+   - Real-time Search Box: Non-collapsible search field matching instructor name, 
+     email, designation, department title, phone number, and assigned course codes.
+
+--------------------------------------------------------------------------------
+2.6 REGISTERED STUDENT ROSTER
+--------------------------------------------------------------------------------
+- Student Roster: Enroll new student candidates with real-time credential generation.
+  * Session (Enrollment Year) Calendar Picker:
+    - Selected via an interactive calendar date picker with current date pre-selected by default.
+    - The 4-digit enrollment session year is automatically extracted from the chosen calendar date.
+  * Roll Number Formula:
+    - Automatically generated following the university standard: 
+      `<ExtractedYear>-<DeptCode>-<NumericDigits>` (e.g., 2026-cs-01).
+    - Validates uniqueness per session year, department, and semester.
+  * Institutional Email Formula:
+    - Automatically generated using the active university domain:
+      `<ExtractedYear>-<DeptCode>-<NumericDigits>@<Domain>` (e.g., 2026-cs-01@nicore.edu.pk).
+  * Semester selection: Bound strictly to configured, available curriculum semesters.
+  * Reset Password & Profile: Administrator can update profiles and reset passwords via "Manage".
 
 ================================================================================
-3. FACULTY / TEACHER PORTAL MANUAL
+3. STUDENT SEMESTER PROGRESSION & MANAGEMENT
+================================================================================
+
+3.1 Student Creation & Onboarding Rules:
+--------------------------------------------------------------------------------
+When an administrator enrolls a new student candidate in the "Student Directory" tab:
+1. Fresh Admission (Standard Intake):
+   - Admission Type is selected as "Fresh Admission".
+   - The starting semester is automatically set to "Semester 1" and locked.
+   - The UI disables semester selection with a lock indicator to enforce degree 
+     entry integrity.
+   - Academic status defaults to "active".
+2. Transfer / Lateral Entry:
+   - Admission Type is selected as "Transfer / Lateral Entry".
+   - The administrator selects the starting semester based on recognized transfer credits.
+   - The semester dropdown displays ONLY the semesters currently available in the 
+     university system (e.g. if only 3 semesters exist, only those 3 are displayed, 
+     preventing selection of non-existent terms).
+   - Academic status defaults to "active".
+3. Session (Enrollment Year) via Calendar:
+   - The enrollment year is selected through an interactive calendar date picker 
+     (today's date selected by default).
+   - The 4-digit session year is extracted directly from the calendar date.
+   - The roll number and official institutional email automatically derive from the 
+     extracted year and update in real-time with live preview badges.
+   - The same calendar picker is available when updating existing students ("Manage & Reset").
+
+3.2 Automated Semester Promotion Engine (Batch Processing):
+--------------------------------------------------------------------------------
+Trigger:
+- Located in the "Courses & Semesters" tab under the "Academic Semesters Directory".
+- In the "Batch Promotion" column, click "Declare Results & Promote" on the relevant term.
+Evaluation Criteria:
+- Automatically calculates term quality points, attempted credits, and cumulative GPA.
+- Minimum passing threshold: CGPA >= 2.00 (HEC standard) and required credits earned.
+Promotion Decision:
+- Pass:
+  * Increments `current_semester` by 1 (`current_semester += 1`).
+  * If student finishes Semester 8 (or final degree term), status is updated to "graduated".
+  * Otherwise, status remains "active".
+- Fail / Under-criteria (Detention & Repeat Policy):
+  * Do NOT increment `current_semester`. The semester value remains unchanged.
+  * The student's academic status is set to "detained" (or "repeat").
+  * The student remains in the same semester and repeats the unearned/failed courses 
+    during subsequent term registration.
+- Automated Notification Dispatched:
+  * Each evaluated candidate receives an official electronic notification detailing 
+    their progression decision, CGPA, and next term status.
+
+3.3 Super Admin Manual Override & Audit Trail:
+--------------------------------------------------------------------------------
+In the "Student Directory" tab, each student candidate card features an 
+"Override Semester" administrative button.
+Conditions & Requirements:
+1. Role-Based Access Control:
+   - Strictly restricted to Super Admin or Academic Controller roles.
+2. Dynamic Curriculum Semesters:
+   - The Target Semester dropdown only displays available semesters configured in the 
+     system, rather than hardcoded 1-8 options.
+3. Session (Enrollment Year) & Credential Synchronization:
+   - Includes a calendar date picker (with current date or student's session date selected).
+   - The 4-digit year is extracted from the calendar date and dynamically syncs the 
+     student's official Roll Number and institutional email with a live preview.
+4. Mandatory Audit Reason:
+   - The administrator must supply a non-empty, detailed justification in the confirmation 
+     modal (e.g., "Credit transfer evaluation from accredited institution", 
+     "Grade rechecking correction approved by Academic Council", "Official medical exemption").
+   - Empty or whitespace reasons are strictly rejected by both client-side validation 
+     and backend validation middleware.
+5. Status Synchronization:
+   - If an administrator manually advances or adjusts a student who is currently 
+     marked as "detained", the system automatically clears the detention restriction 
+     and resets their academic status back to "active".
+6. Immutable Audit Logging:
+   - Every manual change generates a persistent audit log tracking:
+     * Target student identifier, roll number, and department
+     * Performing administrator identifier and name
+     * Previous semester value
+     * New target semester value
+     * Previous status and synchronized new status
+     * Mandatory justification text provided
+     * Live UTC timestamp
+   - All audit events are permanently reviewable in the dedicated "Audit Trail" tab.
+
+================================================================================
+4. FACULTY / TEACHER PORTAL MANUAL
 ================================================================================
 Faculty members can switch between their assigned courses using the top course 
 switcher dropdown.
