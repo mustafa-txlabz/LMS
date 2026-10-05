@@ -111,7 +111,7 @@ UniCore LMS incorporates university degree progression rules, automated term res
 - **Mandatory Justification:** Every manual change requires a non-empty audit reason (e.g., credit transfer evaluation, grade rechecking correction, council dispensation). Empty justifications are rejected by both client and backend validation middlewares.
 - **Automatic Status Synchronization:** Advancing a `detained` student manually clears the restriction and synchronizes academic status back to `active`.
 - **Immutable Audit Logging:** All manual and batch progression events are logged with student ID, roll number, performing admin, previous & new semesters, previous & new statuses, justification, and UTC timestamp.
-- **Audit Trail Tab:** Accessible directly from the top navigation bar with full-text search and category filtering.
+- **Audit Logs Tab:** Accessible directly from the top navigation bar (`Audit Logs`) with full-text search, event count badges, and complete progression history.
 
 ---
 

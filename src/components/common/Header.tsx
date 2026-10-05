@@ -68,7 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
         { id: 'faculty', label: 'Faculty', fullLabel: 'Faculty Directory', icon: Users },
         { id: 'students', label: 'Students', fullLabel: 'Student Directory', icon: GraduationCap },
         { id: 'departments', label: 'Departments', fullLabel: 'Academic Departments', icon: Building2 },
-        { id: 'audit', label: 'Audit Trail', fullLabel: 'Progression Audit Trail', icon: ShieldAlert },
+        { id: 'audit', label: 'Audit Logs', fullLabel: 'Progression & Manual Override Audit Trail', icon: ShieldAlert },
       ];
     } else if (currentUser.role === 'teacher') {
       return [
@@ -90,8 +90,8 @@ export const Header: React.FC<HeaderProps> = ({
   const navLinks = getNavLinks();
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90 shadow-2xs transition-colors w-full overflow-x-clip">
-      <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-8">
+    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90 shadow-2xs transition-colors w-full">
+      <div className="w-full max-w-[1600px] mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 gap-2 sm:gap-4">
           {/* Zone 1: Brand Wordmark (Single horizontal row, zero vertical wrapping, hover lift) */}
           <button
@@ -106,8 +106,8 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </button>
 
-          {/* Zone 2: Navigation Links (Responsive, never overflows, smooth hover & active animations) */}
-          <nav className="hidden md:flex items-center gap-1 sm:gap-1.5 flex-1 justify-center max-w-2xl px-1 overflow-x-auto scrollbar-none">
+          {/* Zone 2: Navigation Links (Clean, concise labels with icons, never overflows or cuts off) */}
+          <nav className="hidden md:flex items-center gap-1 xl:gap-1.5 flex-1 justify-center px-1 min-w-0 max-w-full overflow-x-auto scrollbar-none py-1">
             {navLinks.map((link) => {
               const Icon = link.icon;
               const isActive = activeTab === link.id;
@@ -116,38 +116,21 @@ export const Header: React.FC<HeaderProps> = ({
                   key={link.id}
                   onClick={() => setActiveTab(link.id)}
                   title={link.fullLabel}
-                  className={`flex items-center gap-1.5 px-2.5 lg:px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150 whitespace-nowrap cursor-pointer shrink-0 ${
+                  className={`flex items-center gap-1.5 px-2 xl:px-3 py-1.5 text-[11px] xl:text-xs font-semibold rounded-lg transition-all duration-150 whitespace-nowrap cursor-pointer shrink-0 ${
                     isActive
                       ? 'bg-slate-900 text-white shadow-xs scale-[1.02]'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 hover:scale-[1.02] active:scale-95'
                   }`}
                 >
                   <Icon className={`w-3.5 h-3.5 transition-transform duration-150 ${isActive ? 'text-indigo-300' : 'text-slate-400 group-hover:text-slate-600'}`} />
-                  <span className="hidden xl:inline">{link.fullLabel}</span>
-                  <span className="xl:hidden">{link.label}</span>
+                  <span>{link.label}</span>
                 </button>
               );
             })}
           </nav>
 
-          {/* Zone 3: Actions & Account (Clean, ZERO role badge on navbar, perfectly responsive) */}
+          {/* Zone 3: Actions & Account (Clean, perfectly balanced, responsive) */}
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            {/* Active Semester Badge (Only on wide screens to prevent overflow) */}
-            <div className="hidden 2xl:flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-700 whitespace-nowrap hover:bg-slate-100/80 transition-colors">
-              <Calendar className="w-3.5 h-3.5 text-slate-500" />
-              <span className="font-semibold">{currentSemester.name}</span>
-              <span className="text-slate-300">·</span>
-              <span
-                className={`font-semibold ${
-                  currentSemester.isRegistrationOpen
-                    ? 'text-emerald-700'
-                    : 'text-rose-600'
-                }`}
-              >
-                {currentSemester.isRegistrationOpen ? 'Open' : 'Closed'}
-              </span>
-            </div>
-
             {/* Email Logs Trigger (Compact & animated) */}
             {recentEmail && (
               <button
@@ -156,7 +139,7 @@ export const Header: React.FC<HeaderProps> = ({
                 className="flex items-center gap-1.5 p-2 sm:px-2.5 sm:py-1.5 text-xs font-medium text-slate-700 hover:text-indigo-600 hover:bg-slate-100 rounded-lg border border-slate-200 transition-all duration-150 shadow-2xs hover:scale-105 active:scale-95 cursor-pointer group"
               >
                 <Mail className="w-3.5 h-3.5 text-indigo-600 group-hover:rotate-12 transition-transform duration-200" />
-                <span className="hidden lg:inline whitespace-nowrap">Email Logs</span>
+                <span className="hidden xl:inline whitespace-nowrap">Email Logs</span>
               </button>
             )}
 
@@ -192,7 +175,7 @@ export const Header: React.FC<HeaderProps> = ({
                   />
                   <span className="absolute bottom-0 right-0 w-2 h-2 bg-emerald-500 rounded-full ring-1 ring-white" />
                 </div>
-                <span className="hidden lg:inline text-xs font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors max-w-[100px] truncate">
+                <span className="hidden xl:inline text-xs font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors max-w-[100px] truncate">
                   {currentUser.name.split(' ')[0]}
                 </span>
                 <ChevronDown

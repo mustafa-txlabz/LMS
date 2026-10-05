@@ -313,7 +313,7 @@ Conditions & Requirements:
      * Previous status and synchronized new status
      * Mandatory justification text provided
      * Live UTC timestamp
-   - All audit events are permanently reviewable in the dedicated "Audit Trail" tab.
+   - All audit events are permanently reviewable in the dedicated "Audit Logs" (Progression Audit Trail) tab in the top navigation.
 
 ================================================================================
 4. FACULTY / TEACHER PORTAL MANUAL
