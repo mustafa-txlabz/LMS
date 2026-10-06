@@ -769,6 +769,207 @@ app.put('/api/admin/users/:id', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
+// System Analytics & Metrics Aggregation Route
+// -------------------------------------------------------------
+app.get('/api/admin/analytics', async (req: Request, res: Response) => {
+  try {
+    const department = (req.query.department as string) || 'ALL';
+    const semesterId = (req.query.semesterId as string) || 'ALL';
+
+    let allUsers: any[] = [];
+    let allCourses: any[] = [];
+    let allSemesters: any[] = [];
+    let allEnrollments: any[] = [];
+    let allGrades: any[] = [];
+    let allLectures: any[] = [];
+
+    if (isMongoConnected) {
+      [allUsers, allCourses, allSemesters, allEnrollments, allGrades, allLectures] = await Promise.all([
+        UserModel.find().lean(),
+        CourseModel.find().lean(),
+        SemesterModel.find().lean(),
+        EnrollmentModel.find().lean(),
+        GradeModel.find().lean(),
+        LectureModel.find().lean(),
+      ]);
+    } else {
+      allUsers = memoryUsers;
+      allCourses = memoryCourses;
+      allSemesters = memorySemesters;
+      allEnrollments = memoryEnrollments;
+      allGrades = memoryGrades;
+      allLectures = memoryLectures;
+    }
+
+    const students = allUsers.filter((u) => u.role === 'student');
+    const teachers = allUsers.filter((u) => u.role === 'teacher');
+
+    const targetSem = semesterId === 'ALL'
+      ? null
+      : allSemesters.find((s) => s.id === semesterId || String(s.number) === semesterId);
+
+    // 1. Filter Students (Dept + Semester)
+    const filteredStudents = students.filter((s) => {
+      const depts: string[] = Array.isArray(s.departments) && s.departments.length > 0
+        ? s.departments
+        : (s.department ? [s.department] : ['Computer Science']);
+      const matchesDept = department === 'ALL' || depts.some((d) => d.toLowerCase() === department.toLowerCase());
+      const matchesSem = !targetSem || s.semester === targetSem.number || (s.semester === undefined && targetSem.number === 1);
+      return matchesDept && matchesSem;
+    });
+
+    // 2. Filter Teachers (CRITICAL RULE: Depends on Department ONLY, semester filter is IGNORED!)
+    const filteredTeachers = department === 'ALL'
+      ? teachers
+      : teachers.filter((t) => {
+          const depts: string[] = Array.isArray(t.departments) && t.departments.length > 0
+            ? t.departments
+            : (t.department ? [t.department] : ['Computer Science']);
+          return depts.some((d) => d.toLowerCase() === department.toLowerCase());
+        });
+
+    // 3. Filter Courses (Dept + Semester)
+    const filteredCourses = allCourses.filter((c) => {
+      const matchesDept = department === 'ALL' || c.department?.toLowerCase() === department.toLowerCase();
+      const matchesSem = !targetSem || c.semesterId === targetSem.id || c.semesterNumber === targetSem.number;
+      return matchesDept && matchesSem;
+    });
+
+    const filteredCourseIds = new Set(filteredCourses.map((c) => c.id));
+    const filteredStudentIds = new Set(filteredStudents.map((s) => s.id));
+
+    // 4. Filter Enrollments (Course seatings)
+    const filteredEnrollments = (department === 'ALL' && semesterId === 'ALL')
+      ? allEnrollments.filter((e) => e.status === 'registered')
+      : filteredStudents.length > 0
+      ? allEnrollments.filter((e) => e.status === 'registered' && filteredStudentIds.has(e.studentId))
+      : [];
+
+    // 5. Attendance Calculation
+    let totalAttended = 0;
+    let totalEntries = 0;
+    if (filteredStudents.length > 0) {
+      allLectures.forEach((lec: any) => {
+        if (Array.isArray(lec.attendance)) {
+          lec.attendance.forEach((att: any) => {
+            if (filteredStudentIds.has(att.studentId)) {
+              totalEntries++;
+              if (att.status === 'present' || att.status === 'late' || att.status === 'excused') {
+                totalAttended++;
+              }
+            }
+          });
+        }
+      });
+    }
+    const averageAttendanceRate = totalEntries > 0 ? Math.round((totalAttended / totalEntries) * 100) : 0;
+
+    // 6. Average GPA
+    let averageGpa = 0.0;
+    if (filteredStudents.length > 0) {
+      const validGpas = filteredStudents.map((s) => s.cgpa).filter((g: any) => typeof g === 'number' && !isNaN(g) && g > 0);
+      if (validGpas.length > 0) {
+        averageGpa = Number((validGpas.reduce((a: number, b: number) => a + b, 0) / validGpas.length).toFixed(2));
+      }
+    }
+
+    // 7. Grade Distribution
+    const filteredGrades = (department === 'ALL' && semesterId === 'ALL')
+      ? allGrades
+      : filteredStudents.length > 0
+      ? allGrades.filter((g: any) => filteredStudentIds.has(g.studentId))
+      : [];
+
+    const gradeCounts: Record<string, number> = {
+      'A+': 0, A: 0, 'A-': 0, 'B+': 0, B: 0, 'B-': 0, 'C+': 0, C: 0, D: 0, F: 0,
+    };
+    filteredGrades.forEach((g: any) => {
+      if (g.marks && gradeCounts[g.marks.letterGrade] !== undefined) {
+        gradeCounts[g.marks.letterGrade]++;
+      }
+    });
+    const gradeDistribution = Object.entries(gradeCounts).map(([grade, count]) => ({ grade, count }));
+
+    // 8. Attendance Audit Health per student
+    let eligibleCount = 0;
+    let warningCount = 0;
+    let debarredCount = 0;
+
+    if (filteredStudents.length > 0) {
+      filteredStudents.forEach((std: any) => {
+        let stdEntries = 0;
+        let stdAttended = 0;
+        allLectures.forEach((lec: any) => {
+          if (Array.isArray(lec.attendance)) {
+            lec.attendance.forEach((att: any) => {
+              if (att.studentId === std.id) {
+                stdEntries++;
+                if (att.status === 'present' || att.status === 'late' || att.status === 'excused') {
+                  stdAttended++;
+                }
+              }
+            });
+          }
+        });
+        const rate = stdEntries > 0 ? (stdAttended / stdEntries) * 100 : 0;
+        if (rate >= 75) eligibleCount++;
+        else if (rate >= 60) warningCount++;
+        else debarredCount++;
+      });
+    }
+
+    const totalStudentsForAtt = filteredStudents.length;
+    const eligibleRate = totalStudentsForAtt > 0 ? Math.round((eligibleCount / totalStudentsForAtt) * 100) : 0;
+    const warningRate = totalStudentsForAtt > 0 ? Math.round((warningCount / totalStudentsForAtt) * 100) : 0;
+    const debarredRate = totalStudentsForAtt > 0 ? Math.max(0, 100 - eligibleRate - warningRate) : 0;
+
+    const attendanceHealth = {
+      eligibleRate,
+      warningRate,
+      debarredRate,
+      eligibleCount,
+      warningCount,
+      debarredCount,
+    };
+
+    // 8. Department Breakdown
+    const deptMap: Record<string, { students: number; courses: number }> = {};
+    filteredStudents.forEach((s: any) => {
+      const sDept = (Array.isArray(s.departments) && s.departments[0]) || s.department || 'Computer Science';
+      if (!deptMap[sDept]) deptMap[sDept] = { students: 0, courses: 0 };
+      deptMap[sDept].students++;
+    });
+    filteredCourses.forEach((c: any) => {
+      if (!deptMap[c.department]) deptMap[c.department] = { students: 0, courses: 0 };
+      deptMap[c.department].courses++;
+    });
+
+    const departmentBreakdown = Object.entries(deptMap).map(([dept, data]) => ({
+      department: dept,
+      students: data.students,
+      courses: data.courses,
+    }));
+
+    return res.json({
+      success: true,
+      analytics: {
+        totalStudents: filteredStudents.length,
+        totalTeachers: filteredTeachers.length,
+        totalCourses: filteredCourses.length,
+        totalEnrollments: filteredEnrollments.length,
+        averageAttendanceRate,
+        averageGpa,
+        gradeDistribution,
+        departmentBreakdown,
+        attendanceHealth,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
 // Semester Progression & Manual Override API Routes
 // -------------------------------------------------------------
 

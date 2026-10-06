@@ -34,6 +34,9 @@ import {
   UserCheck,
   Sparkles,
   Crown,
+  SlidersHorizontal,
+  RotateCcw,
+  Filter,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -53,6 +56,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     users,
     currentUser,
     departments,
+    enrollments,
+    grades,
+    lectures,
     deleteDepartment,
     addCourse,
     updateCourse,
@@ -65,7 +71,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsProfileModalOpen,
   } = useLms();
 
-  const analytics = getSystemAnalytics();
+  // Analytics Filter States (Department & Semester) - Defaults: 'ALL'
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('ALL');
+  const [selectedSemester, setSelectedSemester] = useState<string>('ALL');
+
+  const handleResetAnalyticsFilters = () => {
+    setSelectedDepartment('ALL');
+    setSelectedSemester('ALL');
+  };
+
+  const analytics = useMemo(() => {
+    return getSystemAnalytics(selectedDepartment, selectedSemester);
+  }, [
+    getSystemAnalytics,
+    selectedDepartment,
+    selectedSemester,
+    users,
+    courses,
+    enrollments,
+    grades,
+    lectures,
+    semesters,
+    departments,
+  ]);
+
+  const targetAnalyticsSem = useMemo(() => {
+    if (selectedSemester === 'ALL') return null;
+    return (
+      semesters.find(
+        (s) => s.id === selectedSemester || String(s.number) === selectedSemester
+      ) || null
+    );
+  }, [semesters, selectedSemester]);
+
+  const goodStandingPercentage = useMemo(() => {
+    if (!analytics.gradeDistribution || analytics.gradeDistribution.length === 0) return 0;
+    const totalGraded = analytics.gradeDistribution.reduce((acc, curr) => acc + curr.count, 0);
+    if (totalGraded === 0) return 0;
+    const goodGraded = analytics.gradeDistribution
+      .filter((g) => g.grade !== 'F' && g.grade !== 'D')
+      .reduce((acc, curr) => acc + curr.count, 0);
+    return Math.round((goodGraded / totalGraded) * 100);
+  }, [analytics.gradeDistribution]);
+
+  const attHealth = useMemo(() => {
+    return (
+      analytics.attendanceHealth || {
+        eligibleRate: 0,
+        warningRate: 0,
+        debarredRate: 0,
+        eligibleCount: 0,
+        warningCount: 0,
+        debarredCount: 0,
+      }
+    );
+  }, [analytics.attendanceHealth]);
+
   const teachers = users.filter((u) => u.role === 'teacher');
   const students = users.filter((u) => u.role === 'student');
   const adminUser = users.find((u) => u.role === 'admin') || (currentUser?.role === 'admin' ? currentUser : null);
@@ -605,6 +666,98 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
 
+          {/* Analytics Filter Bar (Responsive, Header Bar below Analytics header and above metric cards) */}
+          <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs transition-all duration-150">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5">
+              {/* Left: Filter Controls Group */}
+              <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-800 tracking-tight shrink-0 mr-1">
+                  <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 shadow-2xs">
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="hidden sm:inline">Analytics Scope:</span>
+                </div>
+
+                {/* Filter Department Dropdown */}
+                <div className="flex items-center gap-1.5 min-w-[200px]">
+                  <label htmlFor="analytics-dept-filter" className="sr-only">Filter Department</label>
+                  <div className="relative w-full">
+                    <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
+                      <Building2 className="w-3.5 h-3.5" />
+                    </div>
+                    <select
+                      id="analytics-dept-filter"
+                      value={selectedDepartment}
+                      onChange={(e) => setSelectedDepartment(e.target.value)}
+                      className="w-full pl-8 pr-7 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg text-slate-800 hover:bg-white hover:border-slate-300 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all cursor-pointer shadow-2xs"
+                    >
+                      <option value="ALL">All Departments</option>
+                      {departments.map((dept) => (
+                        <option key={dept.id || dept.code} value={dept.name}>
+                          {dept.name} ({dept.code.toUpperCase()})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Filter Semester Dropdown */}
+                <div className="flex items-center gap-1.5 min-w-[200px]">
+                  <label htmlFor="analytics-sem-filter" className="sr-only">Filter Semester</label>
+                  <div className="relative w-full">
+                    <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
+                      <Calendar className="w-3.5 h-3.5" />
+                    </div>
+                    <select
+                      id="analytics-sem-filter"
+                      value={selectedSemester}
+                      onChange={(e) => setSelectedSemester(e.target.value)}
+                      className="w-full pl-8 pr-7 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg text-slate-800 hover:bg-white hover:border-slate-300 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all cursor-pointer shadow-2xs"
+                    >
+                      <option value="ALL">All Semesters</option>
+                      {availableSemesters.map((sem) => (
+                        <option key={sem.id} value={sem.id}>
+                          {sem.name} (Semester {sem.number})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Reset Filters Button (Visible strictly when at least one filter != 'ALL') */}
+                {(selectedDepartment !== 'ALL' || selectedSemester !== 'ALL') && (
+                  <button
+                    onClick={handleResetAnalyticsFilters}
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all active:scale-95 cursor-pointer shadow-2xs animate-fade-in"
+                    title="Reset both filters to default All"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset Filters</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Right: Active Filter Scope Indicator */}
+              <div className="flex items-center gap-2 text-[11px] text-slate-500 shrink-0">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>
+                  {selectedDepartment === 'ALL' && selectedSemester === 'ALL' && (
+                    <span className="font-medium text-slate-600">Showing whole university aggregated data</span>
+                  )}
+                  {selectedDepartment !== 'ALL' && selectedSemester === 'ALL' && (
+                    <span>Department Scope: <strong className="text-indigo-600">{selectedDepartment}</strong> (All Semesters)</span>
+                  )}
+                  {selectedDepartment === 'ALL' && selectedSemester !== 'ALL' && (
+                    <span>Semester Scope: All Departments · <strong className="text-indigo-600">{targetAnalyticsSem?.name || 'Selected Term'}</strong></span>
+                  )}
+                  {selectedDepartment !== 'ALL' && selectedSemester !== 'ALL' && (
+                    <span>Filtered Scope: <strong className="text-indigo-600">{selectedDepartment}</strong> · <strong className="text-indigo-600">{targetAnalyticsSem?.name || 'Selected Term'}</strong></span>
+                  )}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* KPI Stat Cards with rich hover lifts & icon rotations */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-indigo-300 transition-all duration-200 cursor-default group">
@@ -615,7 +768,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-indigo-900 transition-colors">
                 {analytics.totalStudents}
               </div>
-              <div className="mt-1 text-[11px] text-emerald-600 font-medium">Active roster</div>
+              <div className="mt-1 text-[11px] text-emerald-600 font-medium truncate">
+                {selectedDepartment === 'ALL' && selectedSemester === 'ALL' && 'Active roster'}
+                {selectedDepartment !== 'ALL' && selectedSemester === 'ALL' && `Enrolled in ${selectedDepartment}`}
+                {selectedDepartment === 'ALL' && selectedSemester !== 'ALL' && `Semester ${targetAnalyticsSem?.number || ''} cohort`}
+                {selectedDepartment !== 'ALL' && selectedSemester !== 'ALL' && `${selectedDepartment} · Sem ${targetAnalyticsSem?.number || ''}`}
+              </div>
             </div>
 
             <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-blue-300 transition-all duration-200 cursor-default group">
@@ -626,7 +784,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-blue-900 transition-colors">
                 {analytics.totalTeachers}
               </div>
-              <div className="mt-1 text-[11px] text-slate-500">Across {departments.length} departments</div>
+              <div
+                className="mt-1 text-[11px] text-slate-500 truncate"
+                title={selectedDepartment !== 'ALL' ? `Affiliated with ${selectedDepartment}` : undefined}
+              >
+                {selectedDepartment === 'ALL' && selectedSemester === 'ALL' && `Across ${departments.length} departments`}
+                {selectedDepartment === 'ALL' && selectedSemester !== 'ALL' && 'Across all departments (semester agnostic)'}
+                {selectedDepartment !== 'ALL' && `Affiliated with ${selectedDepartment}`}
+              </div>
             </div>
 
             <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-indigo-300 transition-all duration-200 cursor-default group">
@@ -637,7 +802,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-indigo-900 transition-colors">
                 {analytics.totalCourses}
               </div>
-              <div className="mt-1 text-[11px] text-slate-500">Active curriculum</div>
+              <div className="mt-1 text-[11px] text-slate-500 truncate">
+                {selectedDepartment === 'ALL' && selectedSemester === 'ALL' && 'Active curriculum'}
+                {selectedDepartment !== 'ALL' && selectedSemester === 'ALL' && `${selectedDepartment} curriculum`}
+                {selectedDepartment === 'ALL' && selectedSemester !== 'ALL' && `Semester ${targetAnalyticsSem?.number || ''} courses`}
+                {selectedDepartment !== 'ALL' && selectedSemester !== 'ALL' && `${selectedDepartment} · Sem ${targetAnalyticsSem?.number || ''}`}
+              </div>
             </div>
 
             <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-purple-300 transition-all duration-200 cursor-default group">
@@ -648,7 +818,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-purple-900 transition-colors">
                 {analytics.totalEnrollments}
               </div>
-              <div className="mt-1 text-[11px] text-slate-500">Course seatings</div>
+              <div className="mt-1 text-[11px] text-slate-500 truncate">
+                {selectedDepartment === 'ALL' && selectedSemester === 'ALL' ? 'Course seatings' : 'Filtered seatings'}
+              </div>
             </div>
 
             <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-emerald-300 transition-all duration-200 cursor-default group">
@@ -659,7 +831,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-emerald-900 transition-colors">
                 {analytics.averageAttendanceRate}%
               </div>
-              <div className="mt-1 text-[11px] text-emerald-600 font-medium">&gt; 75% threshold</div>
+              {analytics.totalStudents === 0 ? (
+                <div className="mt-1 text-[11px] text-slate-400 font-normal">No student records</div>
+              ) : analytics.averageAttendanceRate >= 75 ? (
+                <div className="mt-1 text-[11px] text-emerald-600 font-medium">&gt; 75% threshold</div>
+              ) : (
+                <div className="mt-1 text-[11px] text-rose-600 font-medium">&lt; 75% threshold warning</div>
+              )}
             </div>
 
             <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs hover:-translate-y-1 hover:shadow-md hover:border-amber-300 transition-all duration-200 cursor-default group">
@@ -670,111 +848,222 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums group-hover:text-amber-900 transition-colors">
                 {analytics.averageGpa.toFixed(2)}
               </div>
-              <div className="mt-1 text-[11px] text-slate-500">Scale of 4.00</div>
-            </div>
-          </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in-up">
-          {/* Grade Distribution Bar Visualizer */}
-          <div className="lg:col-span-2 p-5 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-4 hover:border-slate-300 transition-colors">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">
-                  University Academic Grade Distribution
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Continuous evaluation & midterm/final marks across all active semester courses.
-                </p>
+              <div className="mt-1 text-[11px] text-slate-500 truncate">
+                {analytics.totalStudents === 0
+                  ? 'No enrolled students'
+                  : selectedDepartment !== 'ALL'
+                  ? `${selectedDepartment} GPA`
+                  : 'Scale of 4.00'}
               </div>
-              <div className="text-xs font-mono text-slate-400">Total Graded: {analytics.totalEnrollments}</div>
-            </div>
-
-            <div className="space-y-2.5 pt-2">
-              {analytics.gradeDistribution.map((item) => {
-                const max = Math.max(...analytics.gradeDistribution.map((g) => g.count), 1);
-                const percent = Math.round((item.count / max) * 100);
-                return (
-                  <div key={item.grade} className="flex items-center gap-3 text-xs group cursor-default p-1 rounded hover:bg-slate-50 transition-colors">
-                    <span className="w-8 font-bold text-slate-700 font-mono group-hover:text-slate-900 transition-colors">{item.grade}</span>
-                    <div className="flex-1 h-5 bg-slate-100 rounded overflow-hidden relative">
-                      <div
-                        className={`h-full rounded transition-all duration-300 group-hover:brightness-110 ${
-                          item.grade.startsWith('A')
-                            ? 'bg-emerald-500'
-                            : item.grade.startsWith('B')
-                            ? 'bg-blue-500'
-                            : item.grade.startsWith('C')
-                            ? 'bg-amber-500'
-                            : 'bg-rose-500'
-                        }`}
-                        style={{ width: `${Math.max(percent, item.count > 0 ? 8 : 0)}%` }}
-                      />
-                    </div>
-                    <span className="w-12 text-right font-mono tabular-nums text-slate-600 font-semibold group-hover:text-slate-900 transition-colors">
-                      {item.count} std
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-              <span>Standard Grading Bell Curve</span>
-              <span className="text-emerald-700 font-medium">82% in Good Academic Standing</span>
             </div>
           </div>
 
-          {/* Department Breakdown & Attendance Compliance */}
-          <div className="space-y-6">
-            <div className="p-5 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-4 hover:border-slate-300 transition-colors">
-              <h3 className="text-sm font-bold text-slate-900">
-                Departmental Enrollments
-              </h3>
-              <div className="space-y-3">
-                {analytics.departmentBreakdown.map((dept) => (
-                  <div
-                    key={dept.department}
-                    className="p-2.5 bg-slate-50 rounded border border-slate-100 flex items-center justify-between text-xs hover:-translate-y-0.5 hover:shadow-2xs hover:border-slate-300 transition-all duration-200 cursor-default"
-                  >
-                    <div>
-                      <div className="font-semibold text-slate-900">{dept.department}</div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">
-                        {dept.courses} active semester courses
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in-up">
+            {/* Grade Distribution Bar Visualizer */}
+            <div className="lg:col-span-2 p-5 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-4 hover:border-slate-300 transition-colors">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {selectedDepartment !== 'ALL' ? `${selectedDepartment} Academic Grade Distribution` : 'University Academic Grade Distribution'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {selectedDepartment === 'ALL' && selectedSemester === 'ALL'
+                      ? 'Continuous evaluation & midterm/final marks across all active semester courses.'
+                      : `Filtered marks for ${selectedDepartment !== 'ALL' ? selectedDepartment : 'All Departments'}${targetAnalyticsSem ? ` · ${targetAnalyticsSem.name}` : ''}.`}
+                  </p>
+                </div>
+                <div className="text-xs font-mono text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-md shadow-2xs font-semibold">
+                  Total Graded: {analytics.totalEnrollments}
+                </div>
+              </div>
+
+              <div className="space-y-2.5 pt-2">
+                {analytics.gradeDistribution.map((item) => {
+                  const max = Math.max(...analytics.gradeDistribution.map((g) => g.count), 1);
+                  const percent = Math.round((item.count / max) * 100);
+                  return (
+                    <div key={item.grade} className="flex items-center gap-3 text-xs group cursor-default p-1 rounded hover:bg-slate-50 transition-colors">
+                      <span className="w-8 font-bold text-slate-700 font-mono group-hover:text-slate-900 transition-colors">{item.grade}</span>
+                      <div className="flex-1 h-5 bg-slate-100 rounded overflow-hidden relative">
+                        <div
+                          className={`h-full rounded transition-all duration-300 group-hover:brightness-110 ${
+                            item.grade.startsWith('A')
+                              ? 'bg-emerald-500'
+                              : item.grade.startsWith('B')
+                              ? 'bg-blue-500'
+                              : item.grade.startsWith('C')
+                              ? 'bg-amber-500'
+                              : 'bg-rose-500'
+                          }`}
+                          style={{ width: `${Math.max(percent, item.count > 0 ? 8 : 0)}%` }}
+                        />
+                      </div>
+                      <span className="w-12 text-right font-mono tabular-nums text-slate-600 font-semibold group-hover:text-slate-900 transition-colors">
+                        {item.count} std
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Standard Grading Bell Curve</span>
+                {analytics.totalEnrollments > 0 ? (
+                  <span className="text-emerald-700 font-medium">{goodStandingPercentage}% in Good Academic Standing</span>
+                ) : (
+                  <span className="text-slate-400 font-normal">No graded evaluations for this scope</span>
+                )}
+              </div>
+            </div>
+
+            {/* Department Breakdown & Attendance Compliance */}
+            <div className="space-y-6">
+              <div className="p-5 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-4 hover:border-slate-300 transition-colors">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {selectedDepartment === 'ALL' ? 'Departmental Enrollments' : `${selectedDepartment} Cohort Breakdown`}
+                  </h3>
+                  <span className="text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 font-semibold">
+                    {selectedDepartment === 'ALL' ? `${departments.length} Depts` : (targetAnalyticsSem ? targetAnalyticsSem.name : 'All Semesters')}
+                  </span>
+                </div>
+
+                {selectedDepartment === 'ALL' ? (
+                  <div className="space-y-3">
+                    {analytics.departmentBreakdown.map((dept) => (
+                      <div
+                        key={dept.department}
+                        className="p-2.5 bg-slate-50 rounded border border-slate-100 flex items-center justify-between text-xs hover:-translate-y-0.5 hover:shadow-2xs hover:border-slate-300 transition-all duration-200 cursor-default"
+                      >
+                        <div>
+                          <div className="font-semibold text-slate-900">{dept.department}</div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            {dept.courses} active {targetAnalyticsSem ? `${targetAnalyticsSem.code} ` : ''}courses
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-mono tabular-nums font-bold text-slate-800">
+                            {dept.students}
+                          </span>
+                          <span className="text-[11px] text-slate-400 ml-1">students</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : selectedSemester === 'ALL' ? (
+                  /* Specific Department + All Semesters: Show semester-wise distribution */
+                  <div className="space-y-2.5">
+                    <div className="p-2 bg-indigo-50/70 border border-indigo-200 rounded-lg text-xs flex items-center justify-between">
+                      <span className="font-semibold text-indigo-900">{selectedDepartment}</span>
+                      <span className="text-[11px] font-mono font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                        {analytics.totalStudents} Students · {analytics.totalCourses} Courses
+                      </span>
+                    </div>
+                    {availableSemesters.map((sem) => {
+                      const semItem = analytics.departmentBreakdown.find((d) => d.department === sem.name) || { students: 0, courses: 0 };
+                      return (
+                        <div
+                          key={sem.id}
+                          className="p-2.5 bg-slate-50 rounded border border-slate-100 flex items-center justify-between text-xs hover:-translate-y-0.5 hover:border-slate-300 transition-all duration-200 cursor-default"
+                        >
+                          <div>
+                            <div className="font-semibold text-slate-900">{sem.name}</div>
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              Semester {sem.number} · {semItem.courses} active courses
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-mono tabular-nums font-bold text-slate-800">
+                              {semItem.students}
+                            </span>
+                            <span className="text-[11px] text-slate-400 ml-1">students</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* Specific Department + Specific Semester: Show detailed stats for that cohort */
+                  <div className="space-y-3">
+                    <div className="p-3 bg-indigo-50/80 border border-indigo-200 rounded-lg text-xs space-y-1">
+                      <div className="font-bold text-indigo-950 flex items-center justify-between">
+                        <span>{selectedDepartment}</span>
+                        <span className="font-mono text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200 font-bold">
+                          {targetAnalyticsSem?.name || 'Selected Term'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-indigo-700">
+                        Semester {targetAnalyticsSem?.number || 1} cohort overview & academic metrics
                       </div>
                     </div>
-                    <div className="text-right">
-                      <span className="font-mono tabular-nums font-bold text-slate-800">
-                        {dept.students}
-                      </span>
-                      <span className="text-[11px] text-slate-400 ml-1">students</span>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                        <div className="text-[10px] text-slate-500 uppercase font-semibold">Cohort Size</div>
+                        <div className="text-lg font-bold text-slate-900 font-mono mt-0.5">{analytics.totalStudents}</div>
+                      </div>
+                      <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                        <div className="text-[10px] text-slate-500 uppercase font-semibold">Term Courses</div>
+                        <div className="text-lg font-bold text-slate-900 font-mono mt-0.5">{analytics.totalCourses}</div>
+                      </div>
+                      <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                        <div className="text-[10px] text-slate-500 uppercase font-semibold">Registrations</div>
+                        <div className="text-lg font-bold text-indigo-700 font-mono mt-0.5">{analytics.totalEnrollments}</div>
+                      </div>
+                      <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                        <div className="text-[10px] text-slate-500 uppercase font-semibold">Cohort GPA</div>
+                        <div className="text-lg font-bold text-amber-700 font-mono mt-0.5">{analytics.averageGpa.toFixed(2)}</div>
+                      </div>
                     </div>
                   </div>
-                ))}
+                )}
               </div>
-            </div>
 
-            <div className="p-5 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-3 hover:border-slate-300 transition-colors">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900">Attendance Audit Health</h3>
-                <span className="text-xs font-bold text-emerald-700">92% Met</span>
-              </div>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Mandatory minimum 75% physical class attendance enforced for Final Examination seatings.
-                Automated email warnings are fired automatically when attendance falls below 75%.
-              </p>
-              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden flex">
-                <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: '92%' }} />
-                <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: '5%' }} />
-                <div className="bg-rose-500 h-full transition-all duration-500" style={{ width: '3%' }} />
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 font-mono">
-                <span>Eligible: 92%</span>
-                <span>Warning: 5%</span>
-                <span>Debarred: 3%</span>
+              <div className="p-5 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-3 hover:border-slate-300 transition-colors">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-900">Attendance Audit Health</h3>
+                  {analytics.totalStudents > 0 ? (
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      {attHealth.eligibleRate}% Met
+                    </span>
+                  ) : (
+                    <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                      0% (No Cohort)
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  {analytics.totalStudents > 0 ? (
+                    <>
+                      Mandatory minimum 75% physical class attendance enforced for Final Examination seatings.
+                      Evaluated across {analytics.totalStudents} candidate{analytics.totalStudents === 1 ? '' : 's'}.
+                    </>
+                  ) : (
+                    <>
+                      Mandatory minimum 75% physical class attendance enforced for Final Examination seatings.
+                      No enrolled students found in current filter scope to evaluate.
+                    </>
+                  )}
+                </p>
+                <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden flex">
+                  {analytics.totalStudents > 0 ? (
+                    <>
+                      <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${attHealth.eligibleRate}%` }} />
+                      <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${attHealth.warningRate}%` }} />
+                      <div className="bg-rose-500 h-full transition-all duration-500" style={{ width: `${attHealth.debarredRate}%` }} />
+                    </>
+                  ) : (
+                    <div className="bg-slate-200 h-full w-full" />
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 font-mono">
+                  <span>Eligible: {attHealth.eligibleRate}% ({attHealth.eligibleCount})</span>
+                  <span>Warning: {attHealth.warningRate}% ({attHealth.warningCount})</span>
+                  <span>Debarred: {attHealth.debarredRate}% ({attHealth.debarredCount})</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
       )}
 
       {/* Tab 2: Semester Courses Management */}

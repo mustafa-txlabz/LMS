@@ -163,6 +163,14 @@ export interface SystemAnalytics {
     students: number;
     courses: number;
   }[];
+  attendanceHealth?: {
+    eligibleRate: number;
+    warningRate: number;
+    debarredRate: number;
+    eligibleCount: number;
+    warningCount: number;
+    debarredCount: number;
+  };
 }
 
 export interface Department {

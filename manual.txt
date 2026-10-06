@@ -10,6 +10,7 @@ TABLE OF CONTENTS
 --------------------------------------------------------------------------------
 1. SYSTEM OVERVIEW & USER ROLES
 2. ADMIN DASHBOARD & ACADEMIC MANAGEMENT
+   2.0 Dynamic System Analytics & Metrics Filtering (Department & Semester)
    2.1 Academic Semesters Directory
    2.2 Understanding the Toggle Buttons:
        - "Registration Window" (Open / Closed)
@@ -53,6 +54,72 @@ The system supports three distinct roles:
 ================================================================================
 2. ADMIN DASHBOARD & ACADEMIC MANAGEMENT
 ================================================================================
+
+--------------------------------------------------------------------------------
+2.0 DYNAMIC SYSTEM ANALYTICS & METRICS FILTERING (DEPARTMENT & SEMESTER)
+--------------------------------------------------------------------------------
+Located in the "Analytics" tab of the Admin Dashboard.
+The Analytics header bar features a responsive multi-criteria Filter Bar positioned 
+directly beneath the institutional title and above the top KPI metric cards.
+
+A. FILTER CONTROLS:
+   1. "Filter Department" (Dropdown):
+      - Default option: "All Departments" (value: 'ALL').
+      - Dynamically populated from all active university departments (Computer Science, 
+        Software Engineering, Artificial Intelligence & Data, etc.).
+   2. "Filter Semester" (Dropdown):
+      - Default option: "All Semesters" (value: 'ALL').
+      - Dynamically populated with all configured active semesters in the system 
+        (e.g., Fall 2026 (Semester 5), Spring 2026 (Semester 4), Fall 2025 (Semester 3)).
+   3. "Reset Filters" (Button):
+      - Appears strictly when either Department or Semester is set to a non-default value.
+      - Clicking resets both dropdowns back to "All" simultaneously.
+
+B. MULTI-CRITERIA FILTERING BUSINESS RULES:
+   1. Default State (Dept = 'ALL', Sem = 'ALL'):
+      - Aggregates live institutional figures across the entire university.
+   2. Department Only Selected (Dept != 'ALL', Sem = 'ALL'):
+      - Enrolled Students, Total Courses, Registrations, Avg Attendance, Avg GPA, 
+        and Grade Distribution filter strictly to that department across all semesters.
+      - "Faculty Members" card displays the count of faculty affiliated with that department.
+   3. Semester Only Selected (Dept = 'ALL', Sem != 'ALL'):
+      - Enrolled Students, Total Courses, Registrations, Avg Attendance, Avg GPA, 
+        and Grade Distribution filter strictly to that semester cohort.
+      - CRITICAL RULE: Faculty members are not directly bound to a specific semester. 
+        In this case, the semester filter is IGNORED for the Faculty Members card, 
+        and the full university faculty count is shown with subtext: "Across all departments (semester agnostic)".
+   4. Both Filters Selected (Dept != 'ALL', Sem != 'ALL'):
+      - Metrics filter to the intersection of the selected department and semester.
+      - CRITICAL RULE: Faculty Members count depends ONLY on the selected department 
+        (the semester filter remains ignored for faculty).
+
+C. VISUAL COMPONENTS DYNAMICALLY UPDATED:
+   1. Top 6 Metric Cards:
+      - Enrolled Students, Faculty Members, Total Courses, Registrations, 
+        Avg Attendance, and Avg Univ GPA update with live calculations and dynamic scope subtexts.
+   2. University Academic Grade Distribution:
+      - Bell curve bar chart re-calculates grade distribution and percentage of 
+        students in Good Academic Standing (CGPA >= 2.00) based on filtered dataset.
+   3. Departmental Enrollments & Cohort Breakdown:
+      - When Dept = 'ALL': Displays comparative student and course headcounts across all departments.
+      - When Dept != 'ALL' and Sem = 'ALL': Displays a semester-by-semester breakdown for the selected department.
+      - When Dept != 'ALL' and Sem != 'ALL': Displays detailed cohort metrics (active students, term courses, registrations, cohort GPA).
+   4. Attendance Audit Health:
+      - Progress bar dynamically recalculates compliance: Eligible (>= 75%), Warning (60-74%), and Debarred (< 60%).
+
+D. ZERO-STUDENT COHORT & EMPTY FILTER BEHAVIOR (SYSTEM INTEGRITY):
+   When a department or semester filter has 0 enrolled students (e.g., selecting 
+   "Mathematics & Natural Sciences" where no students have registered yet):
+   1. Enrolled Students Card: Displays "0" with subtext identifying the zero cohort.
+   2. Avg Attendance Card: Displays "0%" with neutral subtext "No student records". 
+      The green "> 75% threshold" highlight is suppressed to avoid false compliance indicators.
+   3. Avg Univ GPA Card: Displays "0.00" with subtext "No enrolled students", eliminating 
+      static university-wide fallback averages.
+   4. Attendance Audit Health: Displays "0% (No Cohort)" badge, explicitly states 
+      "No enrolled students found in current filter scope to evaluate", and renders a 
+      neutral track bar with 0% Eligible, 0% Warning, and 0% Debarred.
+   5. Standard Grading Bell Curve: Shows 0 total graded enrollments and "No graded evaluations for this scope"
+      (eliminating hardcoded standing percentages).
 
 --------------------------------------------------------------------------------
 2.1 ACADEMIC SEMESTERS DIRECTORY

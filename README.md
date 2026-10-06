@@ -83,6 +83,21 @@ The application implements a robust, tamper-proof academic term system centered 
 - **Search Box:** Instant filtering across instructor name, email, academic designation, department title, phone number, and assigned course codes.
 - **Reset Controls:** Dedicated `Reset` button when any filter or query is active, with full synchronization if departments are modified.
 
+### Dynamic Admin Analytics Filtering ("System Analytics & Metrics")
+- **Header Filter Bar:** Responsive filter bar situated above the KPI metric cards with "Filter Department" (default: `All Departments`), "Filter Semester" (default: `All Semesters`), and a dynamic `Reset Filters` button.
+- **Multi-Criteria Scope Logic:**
+  - **Overall Aggregation (Default):** University-wide metrics across all departments and semesters.
+  - **Department-Specific:** Enrolled students, courses, seatings, attendance, GPA, and grades filter strictly to that department. Faculty Members count reflects faculty affiliated with the department.
+  - **Semester-Specific:** Students, courses, seatings, attendance, GPA, and grades filter strictly to that semester cohort. **Critical Rule:** Faculty members have no direct binding to a specific semester, so the semester filter is ignored on the Faculty Members card, displaying total university faculty.
+  - **Intersection (Both Selected):** Metrics compute for the specific department in that term. Faculty count depends exclusively on the selected department.
+- **Interactive Visualizations & Zero-Cohort Integrity:**
+  - **Zero-Student Handling:** If a selected department or semester filter has 0 students, metrics accurately reflect reality: Avg Attendance is `0%` (neutral `No student records` subtext, suppressing green threshold highlights), Avg GPA is `0.00` (`No enrolled students`), Attendance Audit Health displays `0% (No Cohort)` with neutral progress bars, and the Bell Curve displays `0%` with clear empty status.
+  - **Grade Distribution:** Bell curve bar chart re-calculates counts and percentage of students in Good Academic Standing (CGPA &ge; 2.00).
+  - **Departmental Enrollments:** Displays comparative headcounts when all departments are viewed, or an in-depth semester-by-semester breakdown / cohort profile when a specific department is chosen.
+  - **Attendance Audit Health:** Dynamically re-evaluates physical attendance compliance (Eligible &ge;75%, Warning 60-74%, Debarred &lt;60%) with real-time progress bars.
+- **Registration Window Quick Switcher:** Dedicated one-click registration window toggle button in the Analytics header (`[Active Term Name]: Open/Closed (Toggle)`), allowing the Registrar to open or freeze enrollment windows university-wide with immediate client and database synchronization.
+- **Backend API:** Dedicated aggregation endpoint `GET /api/admin/analytics?department=...&semesterId=...` for full-stack reporting.
+
 ---
 
 ## 🎓 Student Semester Progression & Management

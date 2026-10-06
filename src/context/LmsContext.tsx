@@ -25,7 +25,12 @@ import {
   INITIAL_DEPARTMENTS,
   INITIAL_AUDIT_LOGS,
 } from '../data/mockData';
-import { formatStudentEmail, getDepartmentCode } from '../utils/studentEmail';
+import {
+  formatStudentEmail,
+  getDepartmentCode,
+  getUserDepartments,
+  getUserPrimaryDepartment,
+} from '../utils/studentEmail';
 
 interface LmsContextType {
   currentUser: User | null;
@@ -120,7 +125,7 @@ interface LmsContextType {
   deleteNotification: (notificationId: string) => void;
 
   // Helper getters
-  getSystemAnalytics: () => SystemAnalytics;
+  getSystemAnalytics: (department?: string, semesterId?: string) => SystemAnalytics;
   getStudentCourses: (studentId: string) => Course[];
   getTeacherCourses: (teacherId: string) => Course[];
   getCourseStudents: (courseId: string) => User[];
@@ -1705,23 +1710,108 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  const getSystemAnalytics = (): SystemAnalytics => {
+  const getSystemAnalytics = (
+    department: string = 'ALL',
+    semesterId: string = 'ALL'
+  ): SystemAnalytics => {
     const students = users.filter((u) => u.role === 'student');
     const teachers = users.filter((u) => u.role === 'teacher');
     const activeEnrollments = enrollments.filter((e) => e.status === 'registered');
 
+    const targetSem =
+      semesterId === 'ALL'
+        ? null
+        : semesters.find(
+            (s) => s.id === semesterId || String(s.number) === semesterId
+          );
+
+    // 1. Filter Students (Dept + Semester)
+    const filteredStudents = students.filter((s) => {
+      const depts = getUserDepartments(s);
+      const matchesDept =
+        department === 'ALL' ||
+        depts.some((d) => d.trim().toLowerCase() === department.trim().toLowerCase()) ||
+        s.department?.trim().toLowerCase() === department.trim().toLowerCase();
+      const matchesSem =
+        !targetSem ||
+        Number(s.semester) === targetSem.number ||
+        (s.semester === undefined && targetSem.number === 1);
+      return matchesDept && matchesSem;
+    });
+
+    // 2. Filter Teachers (CRITICAL RULE: Depends on Department ONLY, semester filter is IGNORED!)
+    const filteredTeachers =
+      department === 'ALL'
+        ? teachers
+        : teachers.filter((t) => {
+            const depts = getUserDepartments(t);
+            return (
+              depts.some((d) => d.trim().toLowerCase() === department.trim().toLowerCase()) ||
+              t.department?.trim().toLowerCase() === department.trim().toLowerCase()
+            );
+          });
+
+    // 3. Filter Courses (Dept + Semester)
+    const filteredCourses = courses.filter((c) => {
+      const matchesDept =
+        department === 'ALL' ||
+        c.department?.trim().toLowerCase() === department.trim().toLowerCase();
+      const matchesSem =
+        !targetSem ||
+        c.semesterId === targetSem.id ||
+        c.semesterNumber === targetSem.number;
+      return matchesDept && matchesSem;
+    });
+
+    const filteredCourseIds = new Set(filteredCourses.map((c) => c.id));
+    const filteredStudentIds = new Set(filteredStudents.map((s) => s.id));
+
+    // 4. Filter Enrollments (Course seatings of filtered cohort)
+    const filteredEnrollments =
+      department === 'ALL' && semesterId === 'ALL'
+        ? activeEnrollments
+        : filteredStudents.length > 0
+        ? activeEnrollments.filter((e) => filteredStudentIds.has(e.studentId))
+        : [];
+
+    // 5. Attendance Calculation
     let totalAttended = 0;
     let totalEntries = 0;
-    lectures.forEach((lec) => {
-      lec.attendance.forEach((att) => {
-        totalEntries++;
-        if (att.status === 'present' || att.status === 'late' || att.status === 'excused') {
-          totalAttended++;
-        }
+    if (filteredStudents.length > 0) {
+      lectures.forEach((lec) => {
+        lec.attendance.forEach((att) => {
+          if (filteredStudentIds.has(att.studentId)) {
+            totalEntries++;
+            if (att.status === 'present' || att.status === 'late' || att.status === 'excused') {
+              totalAttended++;
+            }
+          }
+        });
       });
-    });
+    }
     const averageAttendanceRate =
-      totalEntries > 0 ? Math.round((totalAttended / totalEntries) * 100) : 89;
+      totalEntries > 0 ? Math.round((totalAttended / totalEntries) * 100) : 0;
+
+    // 6. Average GPA Calculation
+    let averageGpa = 0.0;
+    if (filteredStudents.length > 0) {
+      const validGpas = filteredStudents
+        .map((s) => s.cgpa)
+        .filter((g): g is number => typeof g === 'number' && !isNaN(g) && g > 0);
+      if (validGpas.length > 0) {
+        averageGpa = Number(
+          (validGpas.reduce((a, b) => a + b, 0) / validGpas.length).toFixed(2)
+        );
+      }
+    }
+
+    // 7. Grade Distribution
+    const filteredGrades =
+      department === 'ALL' && semesterId === 'ALL'
+        ? grades
+        : filteredStudents.length > 0
+        ? grades.filter((g) => filteredStudentIds.has(g.studentId))
+        : [];
 
     const gradeCounts: Record<string, number> = {
       'A+': 0,
@@ -1736,7 +1826,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       F: 0,
     };
 
-    grades.forEach((g) => {
+    filteredGrades.forEach((g) => {
       if (gradeCounts[g.marks.letterGrade] !== undefined) {
         gradeCounts[g.marks.letterGrade]++;
       }
@@ -1747,32 +1837,92 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       count,
     }));
 
+    // 8. Department Breakdown
     const deptMap: Record<string, { students: number; courses: number }> = {};
-    students.forEach((s) => {
-      const sDept = (s.departments && s.departments[0]) || s.department || 'Computer Science';
-      if (!deptMap[sDept]) deptMap[sDept] = { students: 0, courses: 0 };
-      deptMap[sDept].students++;
-    });
-    courses.forEach((c) => {
-      if (!deptMap[c.department]) deptMap[c.department] = { students: 0, courses: 0 };
-      deptMap[c.department].courses++;
-    });
+    if (department === 'ALL') {
+      filteredStudents.forEach((s) => {
+        const sDept = getUserPrimaryDepartment(s);
+        if (!deptMap[sDept]) deptMap[sDept] = { students: 0, courses: 0 };
+        deptMap[sDept].students++;
+      });
+      filteredCourses.forEach((c) => {
+        if (!deptMap[c.department]) deptMap[c.department] = { students: 0, courses: 0 };
+        deptMap[c.department].courses++;
+      });
+    } else {
+      // Specific Department: show breakdown across semesters
+      semesters.forEach((sem) => {
+        const semStudents = filteredStudents.filter(
+          (s) => Number(s.semester) === sem.number || (s.semester === undefined && sem.number === 1)
+        );
+        const semCourses = filteredCourses.filter(
+          (c) => c.semesterId === sem.id || c.semesterNumber === sem.number
+        );
+        deptMap[sem.name] = {
+          students: semStudents.length,
+          courses: semCourses.length,
+        };
+      });
+    }
 
-    const departmentBreakdown = Object.entries(deptMap).map(([department, data]) => ({
-      department,
+    const departmentBreakdown = Object.entries(deptMap).map(([dept, data]) => ({
+      department: dept,
       students: data.students,
       courses: data.courses,
     }));
 
+    // 9. Attendance Audit Health per student
+    let eligibleCount = 0;
+    let warningCount = 0;
+    let debarredCount = 0;
+
+    if (filteredStudents.length > 0) {
+      filteredStudents.forEach((std) => {
+        let stdEntries = 0;
+        let stdAttended = 0;
+        lectures.forEach((lec) => {
+          lec.attendance.forEach((att) => {
+            if (att.studentId === std.id) {
+              stdEntries++;
+              if (att.status === 'present' || att.status === 'late' || att.status === 'excused') {
+                stdAttended++;
+              }
+            }
+          });
+        });
+        const rate = stdEntries > 0 ? (stdAttended / stdEntries) * 100 : 0;
+        if (rate >= 75) {
+          eligibleCount++;
+        } else if (rate >= 60) {
+          warningCount++;
+        } else {
+          debarredCount++;
+        }
+      });
+    }
+
+    const totalStudentsForAtt = filteredStudents.length;
+    const eligibleRate = totalStudentsForAtt > 0 ? Math.round((eligibleCount / totalStudentsForAtt) * 100) : 0;
+    const warningRate = totalStudentsForAtt > 0 ? Math.round((warningCount / totalStudentsForAtt) * 100) : 0;
+    const debarredRate = totalStudentsForAtt > 0 ? Math.max(0, 100 - eligibleRate - warningRate) : 0;
+
     return {
-      totalStudents: students.length,
-      totalTeachers: teachers.length,
-      totalCourses: courses.length,
-      totalEnrollments: activeEnrollments.length,
+      totalStudents: filteredStudents.length,
+      totalTeachers: filteredTeachers.length,
+      totalCourses: filteredCourses.length,
+      totalEnrollments: filteredEnrollments.length,
       averageAttendanceRate,
-      averageGpa: 3.68,
+      averageGpa,
       gradeDistribution,
       departmentBreakdown,
+      attendanceHealth: {
+        eligibleRate,
+        warningRate,
+        debarredRate,
+        eligibleCount,
+        warningCount,
+        debarredCount,
+      },
     };
   };
 
