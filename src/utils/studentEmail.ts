@@ -99,7 +99,7 @@ export const formatStudentEmail = (
   const numMatch = cleanRoll.match(/(\d+)$/);
   const numPart = numMatch ? numMatch[1] : cleanRoll;
   const paddedRoll = numPart && numPart.length === 1 ? '0' + numPart : numPart || '01';
-  const cleanDomain = domain.replace(/^@/, '').trim().toLowerCase() || 'nicore.edu.pk';
+  const cleanDomain = domain.replace(/^@/, '').trim().toLowerCase() || 'uet.edu.pk';
   return `${sess}-${deptCode}-${paddedRoll}@${cleanDomain}`;
 };
 

@@ -1,6 +1,18 @@
 export type Role = 'admin' | 'teacher' | 'student';
 export type AdmissionType = 'fresh' | 'transfer';
-export type AcademicStatus = 'active' | 'detained' | 'repeat' | 'graduated';
+export type AcademicStatus = 'active' | 'probation' | 'graduated' | 'detained' | 'repeat';
+
+export interface BacklogCourse {
+  courseId: string;
+  courseCode: string;
+  courseTitle: string;
+  creditHours: number;
+  semesterOffered: number;
+  reason: 'failed' | 'missed';
+  status?: 'pending' | 'cleared';
+  grade?: string;
+  detectedAt?: string;
+}
 
 export interface User {
   id: string;
@@ -16,9 +28,10 @@ export interface User {
   designation?: string; // For teachers, e.g. Associate Professor
   semester?: number; // Current semester for student, e.g. 5
   admissionType?: AdmissionType; // 'fresh' or 'transfer'
-  academicStatus?: AcademicStatus; // 'active' | 'detained' | 'repeat' | 'graduated'
+  academicStatus?: AcademicStatus; // 'active' | 'probation' | 'graduated' | 'detained' | 'repeat'
   cgpa?: number;
   creditsEarned?: number;
+  backlogCourses?: BacklogCourse[]; // Course-level backlogs/repeat courses
   password?: string;
   dob?: string; // Date of birth YYYY-MM-DD
   phone?: string;
@@ -65,8 +78,23 @@ export interface PromotionEvaluationResult {
   creditsAttempted: number;
   creditsPassed: number;
   passed: boolean;
-  decision: 'promoted' | 'detained' | 'graduated';
+  decision: 'promoted' | 'promoted_probation' | 'graduated' | 'pending_graduation' | 'detained';
+  academicStatus: AcademicStatus;
+  backlogsCount: number;
+  backlogs: BacklogCourse[];
+  passedCourses: Array<{ courseId: string; courseCode: string; credits: number; grade: string }>;
   reason: string;
+}
+
+export interface SemesterPromotionBatchSummary {
+  totalEvaluated: number;
+  promotedCount: number; // Promoted with active status (CGPA >= 2.0)
+  probationCount: number; // Promoted with probation status (CGPA < 2.0)
+  carryingBacklogsCount: number; // Students carrying 1+ uncleared backlogs
+  graduatedCount: number;
+  pendingGraduationCount: number;
+  detainedCount: number;
+  results: PromotionEvaluationResult[];
 }
 
 export interface Course {

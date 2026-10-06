@@ -234,12 +234,12 @@ export const ProfileSettingsModal: React.FC = () => {
                         required
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="e.g. registrar@nicore.edu.pk"
+                        placeholder="e.g. registrar@uet.edu.pk"
                         className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500 font-mono"
                       />
                       <p className="text-[10px] text-slate-600 mt-1 flex items-center justify-between">
                         <span>
-                          Active University Domain: <strong className="text-indigo-600 font-mono">@{email.split('@')[1] || 'nicore.edu.pk'}</strong>
+                          Active University Domain: <strong className="text-indigo-600 font-mono">@{email.split('@')[1] || 'uet.edu.pk'}</strong>
                         </span>
                         <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" />

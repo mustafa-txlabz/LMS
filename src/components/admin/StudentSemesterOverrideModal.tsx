@@ -93,8 +93,8 @@ export const StudentSemesterOverrideModal: React.FC<StudentSemesterOverrideModal
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // University domain for student email
-  const adminEmail = currentUser?.email || 'registrar@nicore.edu.pk';
-  const adminDomain = adminEmail.includes('@') ? adminEmail.split('@')[1] : 'nicore.edu.pk';
+  const adminEmail = currentUser?.email || 'registrar@uet.edu.pk';
+  const adminDomain = adminEmail.includes('@') ? adminEmail.split('@')[1] : 'uet.edu.pk';
 
   const studentDept = getUserPrimaryDepartment(student);
   const cleanDigits = extractRollNumberDigits(student.rollNumber || '01');
@@ -223,6 +223,8 @@ export const StudentSemesterOverrideModal: React.FC<StudentSemesterOverrideModal
               <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
                 isDetained
                   ? 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse'
+                  : student.academicStatus === 'probation'
+                  ? 'bg-amber-100 text-amber-800 border-amber-300'
                   : student.academicStatus === 'graduated'
                   ? 'bg-purple-100 text-purple-800 border-purple-300'
                   : 'bg-emerald-100 text-emerald-800 border-emerald-300'

@@ -164,6 +164,10 @@ export const ProgressionAuditTrail: React.FC = () => {
                           <Sparkles className="w-2.5 h-2.5" />
                           <span>Reset to Active</span>
                         </span>
+                      ) : log.newStatus === 'probation' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200">
+                          Probation
+                        </span>
                       ) : log.newStatus === 'detained' ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-rose-100 text-rose-800 border border-rose-200">
                           Detained

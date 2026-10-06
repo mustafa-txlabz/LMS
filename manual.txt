@@ -11,27 +11,29 @@ TABLE OF CONTENTS
 1. SYSTEM OVERVIEW & USER ROLES
 2. ADMIN DASHBOARD & ACADEMIC MANAGEMENT
    2.0 Dynamic System Analytics & Metrics Filtering (Department & Semester)
-   2.1 Academic Semesters Directory
-   2.2 Understanding the Toggle Buttons:
-       - "Registration Window" (Open / Closed)
-       - "Current Term" (Active Current / Set Current)
-       - "Fall 2026: Registration Open" Master Shortcut Button
+   2.1 Academic Semesters Directory & Batch Promotion Controls
+   2.2 Understanding the "Registration Window" Toggle Button
    2.3 Academic Courses Directory & Filtering:
        - Filter Semester
        - Filter Department
        - Search Box & Reset Filters
        - Adding & Editing Courses
    2.4 Academic Departments Directory & Degree Programs
-   2.5 Faculty & Student Rosters
-3. FACULTY / TEACHER PORTAL MANUAL
-   3.1 Course Switcher & Course Overview
-   3.2 Recording Marks & Academic Evaluations
-   3.3 Attendance Sheets & Automated Notifications
-4. STUDENT PORTAL MANUAL
-   4.1 Semester Registration & Add/Drop Guidelines
-   4.2 Attendance, Lecture Schedule, & Announcements
-   4.3 Academic Transcript, Grades & CGPA Breakdown
-5. FREQUENTLY ASKED QUESTIONS (FAQ) & TROUBLESHOOTING
+   2.5 Appointed University Faculty Directory (Table View & Multi-Criteria Filtering)
+   2.6 Registered Student Roster & Credential Generation
+3. STUDENT SEMESTER PROGRESSION & CREDIT-HOUR BACKLOG ARCHITECTURE
+   3.1 Student Creation & Onboarding Rules
+   3.2 Automated Semester Promotion Engine (Credit-Hour Progression & Backlogs)
+   3.3 Super Admin Manual Override & Immutable Audit Trail
+4. FACULTY / TEACHER PORTAL MANUAL
+   4.1 Course Switcher & Course Overview
+   4.2 Recording Marks & Academic Evaluations
+   4.3 Attendance Sheets & Automated Notifications
+5. STUDENT PORTAL MANUAL
+   5.1 Course Registration (Repeat Backlogs & Regular Offerings)
+   5.2 Attendance, Lecture Schedule, & Announcements
+   5.3 Academic Transcript, Grades & CGPA Breakdown
+6. FREQUENTLY ASKED QUESTIONS (FAQ) & TROUBLESHOOTING
 
 ================================================================================
 1. SYSTEM OVERVIEW & USER ROLES
@@ -122,7 +124,7 @@ D. ZERO-STUDENT COHORT & EMPTY FILTER BEHAVIOR (SYSTEM INTEGRITY):
       (eliminating hardcoded standing percentages).
 
 --------------------------------------------------------------------------------
-2.1 ACADEMIC SEMESTERS DIRECTORY
+2.1 ACADEMIC SEMESTERS DIRECTORY & BATCH PROMOTION CONTROLS
 --------------------------------------------------------------------------------
 Located in the "Courses & Semesters" tab of the Admin Dashboard.
 The system supports up to 8 configured semesters (e.g., Semester 1 through 
@@ -132,18 +134,25 @@ Each semester record tracks:
 - Semester Number (1 to 8, uniquely validated)
 - Semester Title (e.g., Fall 2026, Spring 2026, Fall 2025)
 - Term Code (e.g., FA26, SP26, FA25)
-- Start Date and End Date
-- Registration Window Status (Open or Closed)
-- Current Term Flag (Active Current or Inactive)
+- Duration (Start Date and End Date)
+- Registration Window Status (Interactive Open / Closed Toggle)
 - Configured Course Count
+- Batch Promotion:
+  * "Declare Results & Promote" (Blue button): Opens the batch promotion modal 
+    to audit curriculum courses, calculate GPA, tag backlogs, and promote students.
+  * "● Results Published" (Green badge): Indicates results are published; 
+    provides a direct "View Promotion Report" link to inspect evaluated outcomes.
+- Actions: Delete semester (with confirmation safety guard).
+
+Note: The obsolete "Current Term" column has been removed. Course registration permissions 
+are managed strictly and reliably on a per-semester basis via the "Registration Window" toggle.
 
 --------------------------------------------------------------------------------
-2.2 UNDERSTANDING THE TOGGLE BUTTONS (DETAILED EXPLANATION)
+2.2 UNDERSTANDING THE "REGISTRATION WINDOW" TOGGLE BUTTON
 --------------------------------------------------------------------------------
-The system features three related controls that govern student course registration
-and active semester scheduling. Here is exactly how each works:
+Course enrollment permissions are governed directly per-semester in the Semesters Directory table:
 
-A. "REGISTRATION WINDOW" TOGGLE BUTTON (IN SEMESTER DIRECTORY TABLE)
+A. "REGISTRATION WINDOW" TOGGLE BUTTON:
    - Where to find it:
      In the "Registration Window" column of each semester row in the Semesters 
      Directory table.
@@ -154,53 +163,15 @@ A. "REGISTRATION WINDOW" TOGGLE BUTTON (IN SEMESTER DIRECTORY TABLE)
      Clicking this button toggles course enrollment permissions for that specific 
      semester between OPEN and CLOSED.
    - Effect on the system:
-     * When OPEN: Students belonging to or eligible for this semester can register 
-       for, add, or drop courses in their Student Portal.
+     * When OPEN: Students enrolled in or eligible for this semester can register 
+       for, add, or drop courses in their Student Portal during active intake.
      * When CLOSED: The enrollment window is locked. Students viewing this semester 
-       in their portal will see a "Registration Window Closed" notice. All "Register" 
+       in their portal will see a clear "Registration Window Closed" notice. All "Register" 
        and "Drop" action buttons are disabled to prevent unauthorized changes 
-       after academic deadlines.
+       after institutional deadlines.
    - Typical usage:
-     Turn it OPEN at the beginning of an academic term or add/drop week. Turn it 
-     CLOSED once the deadline passes to freeze class rosters and finalize fees.
-
-B. "CURRENT TERM" BUTTON (IN SEMESTER DIRECTORY TABLE)
-   - Where to find it:
-     In the "Current Term" column of the Semesters Directory table.
-   - Visual Appearance:
-     * For the active semester: A solid indigo badge labeled "Active Current".
-     * For other semesters: A subtle text button labeled "Set Current".
-   - What it does:
-     Clicking "Set Current" marks that specific semester as the university's 
-     primary active academic term (`isCurrent: true`).
-   - Effect on the system:
-     * The system enforces a strict single-active-term rule: setting one semester 
-       as Current automatically unsets the flag on all other semesters.
-     * When creating new courses, the form defaults to this active Current Term.
-     * When students log in, their dashboard prioritizes offerings and notifications 
-       from this active Current Term.
-     * The quick-action toggle button in the Courses Directory (explained below) 
-       dynamically links to this term.
-
-C. "FALL 2026: REGISTRATION OPEN / CLOSED" MASTER SHORTCUT BUTTON
-   - Where to find it:
-     In the filter bar of the "Academic Courses Directory" section (right above 
-     the courses table).
-   - Visual Appearance:
-     * Green pill with pulsing indicator: "[Active Term Name]: Registration Open"
-     * Rose pill with solid red dot: "[Active Term Name]: Registration Closed"
-   - What it is:
-     This is a convenient master shortcut that directly controls the Registration 
-     Window of whichever semester is designated as the university's "Current Term" 
-     (e.g., Fall 2026).
-   - Why it exists:
-     When administrators are managing courses, schedules, and capacities in the 
-     Courses table, they do not need to scroll back up to the Semesters table 
-     to open or close the active term's registration window. Clicking this single 
-     button immediately flips the active semester's registration status.
-   - Bidirectional Synchronization:
-     Toggling this shortcut immediately updates the green/red status badge in the 
-     Semesters Directory table above, and vice versa. Everything stays 100% in sync.
+     Turn it OPEN at the beginning of an academic term or add/drop period. Turn it 
+     CLOSED once the deadline passes to freeze course rosters and finalize records.
 
 --------------------------------------------------------------------------------
 2.3 ACADEMIC COURSES DIRECTORY & FILTERING
@@ -293,7 +264,7 @@ B. MULTI-CRITERIA FACULTY FILTERING:
     - Validates uniqueness per session year, department, and semester.
   * Institutional Email Formula:
     - Automatically generated using the active university domain:
-      `<ExtractedYear>-<DeptCode>-<NumericDigits>@<Domain>` (e.g., 2026-cs-01@nicore.edu.pk).
+      `<ExtractedYear>-<DeptCode>-<NumericDigits>@<Domain>` (e.g., 2026-cs-01@uet.edu.pk).
   * Semester selection: Bound strictly to configured, available curriculum semesters.
   * Reset Password & Profile: Administrator can update profiles and reset passwords via "Manage".
 
@@ -325,27 +296,68 @@ When an administrator enrolls a new student candidate in the "Student Directory"
      extracted year and update in real-time with live preview badges.
    - The same calendar picker is available when updating existing students ("Manage & Reset").
 
-3.2 Automated Semester Promotion Engine (Batch Processing):
+3.2 Automated Semester Promotion Engine (Credit-Hour Progression & Backlogs):
 --------------------------------------------------------------------------------
 Trigger:
 - Located in the "Courses & Semesters" tab under the "Academic Semesters Directory".
-- In the "Batch Promotion" column, click "Declare Results & Promote" on the relevant term.
-Evaluation Criteria:
-- Automatically calculates term quality points, attempted credits, and cumulative GPA.
-- Minimum passing threshold: CGPA >= 2.00 (HEC standard) and required credits earned.
-Promotion Decision:
-- Pass:
-  * Increments `current_semester` by 1 (`current_semester += 1`).
-  * If student finishes Semester 8 (or final degree term), status is updated to "graduated".
-  * Otherwise, status remains "active".
-- Fail / Under-criteria (Detention & Repeat Policy):
-  * Do NOT increment `current_semester`. The semester value remains unchanged.
-  * The student's academic status is set to "detained" (or "repeat").
-  * The student remains in the same semester and repeats the unearned/failed courses 
-    during subsequent term registration.
-- Automated Notification Dispatched:
-  * Each evaluated candidate receives an official electronic notification detailing 
-    their progression decision, CGPA, and next term status.
+- In the "Batch Promotion" column of each term, click the blue "Declare Results & Promote" button.
+- Once executed, the button changes to a green badge "● Results Published" with a 
+  clickable "View Promotion Report" link for historical auditing.
+
+Standard University Credit-Hour System Principles:
+- Traditional full-semester detention ("year-back" or forcing students to repeat an 
+  entire semester) has been replaced by a modern credit-hour backlog progression model.
+- Students advance sequentially to the next semester (`current_semester += 1`), while 
+  uncleared or unattempted courses are tagged as course-level backlogs ("repeat courses") 
+  that students must clear before degree completion.
+
+Step-by-Step Batch Evaluation Workflow:
+1. Course Audit & Curriculum Reconciliation:
+   - Queries all configured curriculum courses for that specific semester and department.
+   - For every enrolled student currently in that semester, the engine audits their 
+     registered/evaluated courses against the offered curriculum:
+     * Passed Courses (Grade >= 50% / Grade points > 0): Earned credit hours and quality 
+       points are added to cumulative credits and GPA. If the course was previously a 
+       backlog, it is resolved and cleared.
+     * Failed Courses (Grade F / <50%): Flagged as `status: 'failed'` / `reason: 'failed'` 
+       and added to the student's persistent `backlogCourses` array.
+     * Unattempted / Missed Courses: Any curriculum course from that semester that the 
+       student never registered for is identified and flagged as `status: 'missing'` / 
+       `reason: 'missed'`, and added to the student's `backlogCourses` array.
+2. Sequential Semester Progression & Academic Standing:
+   - For Continuing Semesters (< Semester 8):
+     * Increment `current_semester += 1` (e.g., Semester 1 -> Semester 2).
+     * Academic Standing:
+       - If Cumulative CGPA >= 2.00: Set status to "active" (Good Academic Standing).
+       - If Cumulative CGPA < 2.00: Set status to "probation" (Academic Probation). 
+         The candidate advances to the next term, but receives an official probation 
+         advisory requiring grade improvement and retake prioritization.
+   - For Final Term (Semester 8 Graduation Audit):
+     * Conferred Graduation: If all required credit hours (>= 130 credits) are earned 
+       AND zero pending backlogs exist, academic status is updated to "graduated".
+     * Graduation Deferred: If the student reaches Semester 8 but carries uncleared 
+       backlogs or missing credits, their status remains "active" (pending graduation) 
+       at Semester 8 until all repeat courses are cleared.
+3. Interactive Evaluation Report Modal:
+   - High-level KPI summary cards:
+     * Total Evaluated candidates
+     * Promoted (Active) count
+     * Promoted on Probation count
+     * Students Carrying Backlogs count
+     * Graduated count & Pending Graduation count
+   - Candidate Filtering Tabs: "All", "Promoted", "On Probation", "Carrying Backlogs", "Graduated".
+   - Detailed Roster Table:
+     * Student Candidate: Avatar, name, roll number, and department.
+     * Term GPA: Evaluated semester GPA.
+     * Cumulative CGPA: Overall university CGPA.
+     * Progression Transition: Visual transition badge (e.g., Sem 1 → Sem 2 or Sem 8 → Graduated).
+     * Academic Standing: Color-coded badge (Active, Academic Probation, Graduated, Pending Graduation).
+     * Backlogs / Repeat Courses: List of uncleared courses with specific badges (Failed vs Missed).
+     * Academic Justification: Detailed institutional note explaining the progression outcome.
+4. Automated Electronic Notifications:
+   - Each evaluated candidate receives an official electronic notification detailing 
+     their evaluated GPA, cumulative CGPA, updated semester number, academic standing, 
+     and an itemized list of any backlog courses requiring re-enrollment.
 
 3.3 Super Admin Manual Override & Audit Trail:
 --------------------------------------------------------------------------------
@@ -358,7 +370,7 @@ Conditions & Requirements:
    - The Target Semester dropdown only displays available semesters configured in the 
      system, rather than hardcoded 1-8 options.
 3. Session (Enrollment Year) & Credential Synchronization:
-   - Includes a calendar date picker (with current date or student's session date selected).
+   - Includes an interactive calendar date picker (with current date or student's session date selected).
    - The 4-digit year is extracted from the calendar date and dynamically syncs the 
      student's official Roll Number and institutional email with a live preview.
 4. Mandatory Audit Reason:
@@ -368,9 +380,8 @@ Conditions & Requirements:
    - Empty or whitespace reasons are strictly rejected by both client-side validation 
      and backend validation middleware.
 5. Status Synchronization:
-   - If an administrator manually advances or adjusts a student who is currently 
-     marked as "detained", the system automatically clears the detention restriction 
-     and resets their academic status back to "active".
+   - When manually overriding a student's semester, the system synchronizes academic 
+     status (e.g., setting to 'active' and clearing stale restrictions).
 6. Immutable Audit Logging:
    - Every manual change generates a persistent audit log tracking:
      * Target student identifier, roll number, and department
@@ -388,11 +399,11 @@ Conditions & Requirements:
 Faculty members can switch between their assigned courses using the top course 
 switcher dropdown.
 
-3.1 Course Management:
+4.1 Course Management:
 - View enrolled student candidate count vs maximum room capacity.
 - Review weekly meeting schedules and lecture room assignments.
 
-3.2 Academic Evaluations & Grading:
+4.2 Academic Evaluations & Grading:
 - Record marks across four core categories:
   1. Quizzes & Homework (15% weight)
   2. Assignments & Projects (25% weight)
@@ -401,7 +412,7 @@ switcher dropdown.
 - Total percentage, letter grade (A, B+, B, C, F), and grade points (4.0 scale) 
   calculate automatically in real time.
 
-3.3 Attendance & Session Broadcasting:
+4.3 Attendance & Session Broadcasting:
 - Mark attendance (Present, Absent, Late, Excused) for each lecture session.
 - System automatically calculates attendance percentages; students below 75% 
   receive automated low-attendance warnings.
@@ -409,45 +420,74 @@ switcher dropdown.
   enrolled students via the simulated email notification service.
 
 ================================================================================
-4. STUDENT PORTAL MANUAL
+5. STUDENT PORTAL MANUAL
 ================================================================================
 Students access their personalized dashboard to manage course registrations and 
 track academic progress.
 
-4.1 Course Registration:
-- Filter available courses by semester tab (Sem 3, Sem 4, Sem 5, or All).
-- If the semester's Registration Window is OPEN:
-  * Click "Enroll Course" to register. The system enforces credit hour limits 
-    and checks maximum seat capacity.
-  * Click "Drop" if needed before registration closes.
-- If the semester's Registration Window is CLOSED:
-  * Registration actions are disabled. Students cannot add or drop courses.
+5.1 Course Registration (Repeat Backlogs & Regular Offerings):
+- Academic Standing Banner:
+  * If in Good Standing: Displays confirmation of active standing.
+  * If on Academic Probation (CGPA < 2.00): Displays an amber advisory banner 
+    recommending that the student prioritize repeating backlog courses to raise their CGPA.
+- Dual-Section Registration Portal:
+  1. "Pending / Repeat Courses (Backlogs)":
+     * Displays all failed or unattempted curriculum courses from prior semesters.
+     * Shows course code, course title, credit hours, and reason badge:
+       - Rose "Must Repeat" badge for failed courses.
+       - Amber "Unattempted / Missed" badge for un-enrolled curriculum courses.
+     * Provides a direct "Register Repeat" button.
+     * Retaking and passing a backlog course clears it from the student's backlog record.
+  2. "Regular Semester Offerings":
+     * Lists newly available curriculum courses for the student's current semester.
+     * Displays course details, instructor, capacity, and "Enroll Course" / "Drop" actions.
+- Credit Hour Ceiling Enforcement:
+  * System enforces the university maximum credit limit (18 to 21 credit hours per term).
+  * Students can balance repeat courses and regular courses without overloading their term schedule.
+- Registration Window Gate:
+  * If the semester's Registration Window is OPEN: Students can enroll or drop courses.
+  * If CLOSED: Registration actions are locked with an explicit "Registration Window Closed" notice.
 
-4.2 Academic Performance & Transcripts:
-- View enrolled courses, credit hours, classroom venues, and instructor details.
-- Review real-time grade breakdowns (Quizzes, Assignments, Midterm, Final).
-- Monitor overall Cumulative GPA (CGPA) and total credits earned.
+5.2 Attendance, Lecture Schedule, & Announcements:
+- View assigned lecture schedules, timings, and classroom venues.
+- Monitor attendance percentage per course with real-time compliance indicators.
+- Receive instant announcements and broadcast notices from instructors.
+
+5.3 Academic Transcript & CGPA Breakdown:
+- Review real-time grade breakdowns (Quizzes, Assignments, Midterm, Final Exam).
+- Monitor overall Cumulative GPA (CGPA) and total credits earned toward degree completion.
 
 ================================================================================
-5. FREQUENTLY ASKED QUESTIONS (FAQ) & TROUBLESHOOTING
+6. FREQUENTLY ASKED QUESTIONS (FAQ) & TROUBLESHOOTING
 ================================================================================
 
-Q1: What happens if I close the Registration Window?
+Q1: What happens if I close the Registration Window for a semester?
 A1: Students will not be able to add new courses or drop existing courses in 
     that semester. Their enrolled courses remain intact and faculty can still 
-    grade them.
+    grade them. Open the window whenever enrollment or add/drop changes are permitted.
 
-Q2: Why does the master shortcut say "Fall 2026: Registration Open"?
-A2: "Fall 2026" is currently designated as the university's "Current Term". 
-    If you change the Current Term in the Semesters table to "Spring 2026", the 
-    shortcut button will immediately update to "Spring 2026: Registration Open".
+Q2: How does the new Credit-Hour Backlog & Promotion system work instead of full detention?
+A2: Under the standard University Credit-Hour System, students are not held back 
+    in the same semester ("detained") due to individual failed or missed courses. 
+    Instead, all continuing students advance sequentially to the next semester 
+    (`current_semester += 1`). Uncleared courses are recorded as course-level backlogs 
+    that the student retakes during open registration. If their CGPA is below 2.00, 
+    they advance under Academic Probation.
 
-Q3: Can multiple semesters be set as "Current Term" at the same time?
-A3: No. The university operates under one active primary term at a time. Setting 
-    any semester as Current automatically clears the flag on all other terms.
+Q3: How do students register for their failed or missed backlog courses?
+A3: In the Student Portal under "Course Registration", students will see a dedicated 
+    "Pending / Repeat Courses (Backlogs)" section at the top of their registration 
+    screen. They can click "Register Repeat" on any backlog course while keeping their 
+    total term enrollment within the 21 credit hour workload ceiling.
 
-Q4: What if a course search returns no results?
-A4: Check if you have an active "Filter Semester" or "Filter Department" selected. 
+Q4: What causes a student to be placed on Academic Probation?
+A4: If a student's Cumulative CGPA drops below 2.00 during batch promotion evaluation, 
+    their academic standing is updated to "probation". They advance to the next semester 
+    but receive an advisory banner urging them to improve their academic performance 
+    and retake backlog courses.
+
+Q5: What if a course search returns no results in the Admin catalog?
+A5: Check if you have an active "Filter Semester" or "Filter Department" selected. 
     Click the "Reset" button in the filter bar to clear all constraints and view 
     the full course catalog.
 

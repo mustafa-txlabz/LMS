@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLms } from '../../context/LmsContext';
 import {
   GraduationCap,
@@ -16,30 +16,51 @@ import {
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
-  const { login } = useLms();
+  const { login, users } = useLms();
+
+  const adminUser = useMemo(() => users.find((u) => u.role === 'admin'), [users]);
+  const teacherUser = useMemo(() => users.find((u) => u.role === 'teacher'), [users]);
+  const studentUser = useMemo(() => users.find((u) => u.role === 'student'), [users]);
+
+  const defaultAdminEmail = adminUser?.email || 'registrar@uet.edu.pk';
+  const defaultStudentEmail = studentUser?.email || '2021-cs-29@uet.edu.pk';
+  const defaultTeacherEmail = teacherUser?.email || 's.jenkins@unicore.edu';
 
   const [activePortal, setActivePortal] = useState<'student' | 'teacher' | 'admin'>('student');
-  const [email, setEmail] = useState('2021-cs-29@nicore.edu.pk');
+  const [email, setEmail] = useState(defaultStudentEmail);
   const [password, setPassword] = useState('password123');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Switch demo persona credentials when clicking portals
+  // Synchronize email when switching portals
   const handleSelectPortal = (portal: 'student' | 'teacher' | 'admin') => {
     setActivePortal(portal);
     setError(null);
     if (portal === 'student') {
-      setEmail('2021-cs-29@nicore.edu.pk');
+      setEmail(defaultStudentEmail);
       setPassword('password123');
     } else if (portal === 'teacher') {
-      setEmail('s.jenkins@unicore.edu');
+      setEmail(defaultTeacherEmail);
       setPassword('password123');
     } else {
-      setEmail('registrar@nicore.edu.pk');
+      setEmail(defaultAdminEmail);
       setPassword('password123');
     }
   };
+
+  // If bootstrap users load with the updated domain, keep the pre-filled email current
+  useEffect(() => {
+    if (activePortal === 'admin' && adminUser?.email) {
+      if (email.includes('nicore') || email.includes('unicore.edu') || !email) {
+        setEmail(adminUser.email);
+      }
+    } else if (activePortal === 'student' && studentUser?.email) {
+      if (email.includes('nicore') || !email) {
+        setEmail(studentUser.email);
+      }
+    }
+  }, [adminUser?.email, studentUser?.email, activePortal]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,34 +153,34 @@ export const LoginPage: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setActivePortal('student');
-                    setEmail('alex.j@student.unicore.edu');
+                    setEmail(defaultStudentEmail);
                     setPassword('password123');
                   }}
                   className="px-2 py-1 bg-slate-800 hover:bg-indigo-900/50 text-slate-300 hover:text-indigo-200 border border-slate-700 hover:border-indigo-500 rounded text-[11px] font-mono transition-all duration-150 active:scale-95 cursor-pointer"
                 >
-                  Alex (CS Sem 5)
+                  {studentUser?.name ? `${studentUser.name.split(' ')[0]} (Student)` : 'Student Demo'}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setActivePortal('teacher');
-                    setEmail('s.jenkins@unicore.edu');
+                    setEmail(defaultTeacherEmail);
                     setPassword('password123');
                   }}
                   className="px-2 py-1 bg-slate-800 hover:bg-blue-900/50 text-slate-300 hover:text-blue-200 border border-slate-700 hover:border-blue-500 rounded text-[11px] font-mono transition-all duration-150 active:scale-95 cursor-pointer"
                 >
-                  Prof. Jenkins
+                  {teacherUser?.name ? teacherUser.name.split(' ')[1] || teacherUser.name : 'Faculty Demo'}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setActivePortal('admin');
-                    setEmail('registrar@unicore.edu');
+                    setEmail(defaultAdminEmail);
                     setPassword('password123');
                   }}
                   className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:border-slate-500 rounded text-[11px] font-mono transition-all duration-150 active:scale-95 cursor-pointer"
                 >
-                  Dean Vance (Admin)
+                  {adminUser?.name ? `${adminUser.name.split(' ')[0]} (Admin)` : 'Registrar (Admin)'}
                 </button>
               </div>
             </div>
@@ -185,7 +206,7 @@ export const LoginPage: React.FC = () => {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@unicore.edu"
+                    placeholder={`e.g. ${defaultAdminEmail}`}
                     className="w-full pl-10 pr-3.5 py-2.5 bg-slate-900/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-mono"
                   />
                 </div>

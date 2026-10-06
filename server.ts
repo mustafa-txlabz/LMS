@@ -27,6 +27,18 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// MongoDB connection ensure middleware (for serverless environments like Vercel)
+app.use(async (_req: Request, _res: Response, next) => {
+  if (!isMongoConnected && mongoUri) {
+    try {
+      await initMongoDB();
+    } catch {
+      // continues with in-memory fallback
+    }
+  }
+  next();
+});
+
 // MongoDB URI from environment
 const rawMongoUri = process.env.MONGODB_URI || '';
 // Format URI safely ensuring password with @ is encoded if needed
@@ -64,9 +76,22 @@ const UserSchema = new mongooseLib.Schema(
     designation: { type: String },
     semester: { type: Number, default: 1 },
     admissionType: { type: String, enum: ['fresh', 'transfer'], default: 'fresh' },
-    academicStatus: { type: String, enum: ['active', 'detained', 'repeat', 'graduated'], default: 'active' },
+    academicStatus: { type: String, enum: ['active', 'probation', 'detained', 'repeat', 'graduated'], default: 'active' },
     cgpa: { type: Number, default: 3.5 },
     creditsEarned: { type: Number, default: 0 },
+    backlogCourses: [
+      {
+        courseId: { type: String, required: true },
+        courseCode: { type: String, required: true },
+        courseTitle: { type: String, default: '' },
+        creditHours: { type: Number, default: 3 },
+        semesterOffered: { type: Number, default: 1 },
+        reason: { type: String, enum: ['failed', 'missed'], default: 'failed' },
+        status: { type: String, enum: ['pending', 'cleared'], default: 'pending' },
+        grade: { type: String },
+        detectedAt: { type: String },
+      },
+    ],
     dob: { type: String, default: '2000-01-01' },
     phone: { type: String },
     address: { type: String },
@@ -246,6 +271,10 @@ async function initMongoDB() {
     console.warn('[MongoDB] No MONGODB_URI found in environment, running with in-memory persistence.');
     return;
   }
+  if (mongooseLib.connection.readyState === 1) {
+    isMongoConnected = true;
+    return;
+  }
   try {
     console.log('[MongoDB] Connecting to MongoDB Atlas (database: unicore_lms)...');
     await mongooseLib.connect(mongoUri, {
@@ -268,6 +297,21 @@ async function initMongoDB() {
       await NotificationModel.insertMany(INITIAL_NOTIFICATIONS);
       await AuditLogModel.insertMany(INITIAL_AUDIT_LOGS);
       console.log('[MongoDB] Seeding completed successfully!');
+    }
+
+    // Auto-migrate any legacy @nicore.edu.pk records in the database to @uet.edu.pk
+    try {
+      const legacyUsers = await UserModel.find({ email: /@nicore\.edu\.pk$/i });
+      if (legacyUsers.length > 0) {
+        console.log(`[Domain Migration] Found ${legacyUsers.length} legacy @nicore.edu.pk user(s). Updating to @uet.edu.pk...`);
+        for (const u of legacyUsers) {
+          u.email = u.email.replace(/@nicore\.edu\.pk$/i, '@uet.edu.pk');
+          await u.save();
+        }
+        console.log('[Domain Migration] Successfully updated legacy emails to @uet.edu.pk!');
+      }
+    } catch (migErr: any) {
+      console.warn('[Domain Migration Notice]', migErr.message);
     }
 
     // Ensure audit logs are seeded if empty
@@ -524,7 +568,7 @@ app.post('/api/admin/update-domain', async (req: Request, res: Response) => {
 
   const cleanDomain = newDomain.replace(/^@/, '').trim().toLowerCase();
   if (!cleanDomain || !cleanDomain.includes('.')) {
-    return res.status(400).json({ error: 'Please provide a valid domain with extension (e.g. nicore.edu.pk)' });
+    return res.status(400).json({ error: 'Please provide a valid domain with extension (e.g. uet.edu.pk)' });
   }
 
   try {
@@ -1199,77 +1243,182 @@ app.post('/api/admin/semesters/:id/publish-results-and-promote', async (req: Req
 
     const evaluatedResults: any[] = [];
     let promotedCount = 0;
-    let detainedCount = 0;
+    let probationCount = 0;
+    let carryingBacklogsCount = 0;
     let graduatedCount = 0;
+    let pendingGraduationCount = 0;
 
     for (const student of allStudents) {
       if (!targetStudentIds.has(student.id)) continue;
 
-      // Calculate term performance for this student
-      const studentEnrollments = allEnrollments.filter((e) => e.studentId === student.id && courseIds.has(e.courseId));
-      let totalQualityPoints = 0;
-      let totalAttemptedCredits = 0;
-      let totalEarnedCredits = 0;
-      let failedCoursesCount = 0;
+      const currentSem = student.semester || semester.number;
+      const studentDepts: string[] = Array.isArray(student.departments) && student.departments.length > 0
+        ? student.departments
+        : (student.department ? [student.department] : ['Computer Science']);
 
-      studentEnrollments.forEach((e) => {
-        const course = allCourses.find((c) => c.id === e.courseId);
-        const cr = course?.creditHours || 3;
-        totalAttemptedCredits += cr;
-
-        const gradeRec = allGrades.find((g) => g.courseId === e.courseId && g.studentId === student.id);
-        const marks = gradeRec?.marks;
-        const gp = marks?.gradePoints !== undefined ? marks.gradePoints : 3.0;
-        const isFailed = marks?.letterGrade === 'F' || (marks?.total !== undefined && marks.total < 50);
-
-        if (isFailed) {
-          failedCoursesCount++;
-        } else {
-          totalEarnedCredits += cr;
-        }
-        totalQualityPoints += gp * cr;
+      // 1. Course Audit & Reconciliation
+      // Query curriculum courses for this specific semester and department
+      let termCurriculum = allCourses.filter((c) => {
+        const matchesSem = c.semesterId === semester.id || c.semesterNumber === semester.number;
+        const matchesDept = studentDepts.some(
+          (d) => d.trim().toLowerCase() === (c.department || '').trim().toLowerCase()
+        ) || c.department === 'All' || c.department === 'General';
+        return matchesSem && matchesDept;
       });
 
-      const termGpa = totalAttemptedCredits > 0
-        ? Number((totalQualityPoints / totalAttemptedCredits).toFixed(2))
+      if (termCurriculum.length === 0) {
+        termCurriculum = allCourses.filter(
+          (c) => c.semesterId === semester.id || c.semesterNumber === semester.number
+        );
+      }
+
+      const passedCourses: Array<{ courseId: string; courseCode: string; credits: number; grade: string }> = [];
+      const termBacklogs: any[] = [];
+      let termQualityPoints = 0;
+      let termAttemptedCredits = 0;
+      let termEarnedCredits = 0;
+
+      termCurriculum.forEach((course) => {
+        const cr = course.creditHours || 3;
+        termAttemptedCredits += cr;
+
+        const isEnrolled = allEnrollments.some(
+          (e) => e.studentId === student.id && e.courseId === course.id && e.status === 'registered'
+        );
+
+        if (!isEnrolled) {
+          // Unattempted / Unenrolled course: Tagged as missing backlog
+          termBacklogs.push({
+            courseId: course.id,
+            courseCode: course.code,
+            courseTitle: course.title,
+            creditHours: cr,
+            semesterOffered: semester.number,
+            reason: 'missed',
+            status: 'pending',
+            detectedAt: new Date().toISOString().slice(0, 10),
+          });
+        } else {
+          // Student is registered: audit grade
+          const gradeRec = allGrades.find(
+            (g) => g.courseId === course.id && g.studentId === student.id
+          );
+          const marks = gradeRec?.marks;
+          const isFailed = marks ? (marks.letterGrade === 'F' || (marks.total !== undefined && marks.total < 50)) : false;
+
+          if (isFailed) {
+            // Failed course: Tagged as failed backlog
+            termBacklogs.push({
+              courseId: course.id,
+              courseCode: course.code,
+              courseTitle: course.title,
+              creditHours: cr,
+              semesterOffered: semester.number,
+              reason: 'failed',
+              grade: marks?.letterGrade || 'F',
+              status: 'pending',
+              detectedAt: new Date().toISOString().slice(0, 10),
+            });
+          } else {
+            // Passed course: Grade points and credits are added
+            const gp = marks?.gradePoints !== undefined ? marks.gradePoints : 3.0;
+            termEarnedCredits += cr;
+            termQualityPoints += gp * cr;
+            passedCourses.push({
+              courseId: course.id,
+              courseCode: course.code,
+              credits: cr,
+              grade: marks?.letterGrade || 'B',
+            });
+          }
+        }
+      });
+
+      // Existing prior backlogs reconciliation:
+      // If student previously had backlogs, check if they passed them this term!
+      const priorBacklogs: any[] = Array.isArray(student.backlogCourses) ? student.backlogCourses : [];
+      const updatedPriorBacklogs: any[] = [];
+
+      priorBacklogs.forEach((b) => {
+        const justPassed = passedCourses.some((p) => p.courseId === b.courseId || p.courseCode === b.courseCode);
+        if (!justPassed && b.status !== 'cleared') {
+          updatedPriorBacklogs.push(b);
+        }
+      });
+
+      // Combine active uncleared backlogs (deduplicating by courseId)
+      const allActiveBacklogs: any[] = [...updatedPriorBacklogs];
+      termBacklogs.forEach((tb) => {
+        if (!allActiveBacklogs.some((b) => b.courseId === tb.courseId || b.courseCode === tb.courseCode)) {
+          allActiveBacklogs.push(tb);
+        }
+      });
+
+      // Cumulative Earned Credits & CGPA
+      const prevCredits = typeof student.creditsEarned === 'number' ? student.creditsEarned : (currentSem > 1 ? (currentSem - 1) * 16 : 0);
+      const updatedCreditsEarned = prevCredits + termEarnedCredits;
+
+      const termGpa = termAttemptedCredits > 0
+        ? Number((termQualityPoints / termAttemptedCredits).toFixed(2))
         : (student.cgpa || 3.0);
 
-      const effectiveGpa = student.cgpa ? Number(((student.cgpa + termGpa) / 2).toFixed(2)) : termGpa;
+      const effectiveGpa = student.cgpa
+        ? Number(((student.cgpa + termGpa) / 2).toFixed(2))
+        : termGpa;
 
-      // Evaluation Criteria:
-      // Minimum CGPA >= minGpa (default 2.0) AND did not fail majority of credits
-      const meetsGpa = effectiveGpa >= minGpa;
-      const meetsCredits = totalAttemptedCredits === 0 || (totalEarnedCredits >= (totalAttemptedCredits * 0.5) && failedCoursesCount <= 1);
-      const passed = meetsGpa && meetsCredits;
-
-      const currentSem = student.semester || semester.number;
+      // 2. Student Semester Progression (Standard Credit-Hour Progression)
       let nextSem = currentSem;
-      let decision: 'promoted' | 'detained' | 'graduated' = 'promoted';
+      let decision: 'promoted' | 'promoted_probation' | 'graduated' | 'pending_graduation' = 'promoted';
+      let academicStatus: 'active' | 'probation' | 'graduated' = 'active';
       let reasonStr = '';
 
-      if (passed) {
-        if (currentSem >= 8) {
-          decision = 'graduated';
-          student.academicStatus = 'graduated';
-          graduatedCount++;
-          reasonStr = `Completed final semester (Semester 8) with CGPA ${effectiveGpa}. Conferred Graduation status.`;
-        } else {
+      if (currentSem < 8) {
+        // Sequential advance: current_semester += 1
+        nextSem = currentSem + 1;
+        if (effectiveGpa >= minGpa) {
+          academicStatus = 'active';
           decision = 'promoted';
-          nextSem = currentSem + 1;
-          student.semester = nextSem;
-          student.academicStatus = 'active';
           promotedCount++;
-          reasonStr = `Met passing criteria (CGPA ${effectiveGpa} >= ${minGpa}, earned ${totalEarnedCredits}/${totalAttemptedCredits} credits). Promoted to Semester ${nextSem}.`;
+          reasonStr = `Satisfactory academic progress (CGPA ${effectiveGpa} >= ${minGpa}, earned ${termEarnedCredits} Cr this term). Promoted to Semester ${nextSem}.`;
+        } else {
+          academicStatus = 'probation';
+          decision = 'promoted_probation';
+          probationCount++;
+          reasonStr = `Academic Probation advisory: CGPA ${effectiveGpa} < ${minGpa}. Promoted to Semester ${nextSem} under academic observation. Course retakes required.`;
+        }
+
+        if (allActiveBacklogs.length > 0) {
+          reasonStr += ` Carrying ${allActiveBacklogs.length} repeat course(s): ${allActiveBacklogs.map((b: any) => b.courseCode).join(', ')}.`;
         }
       } else {
-        decision = 'detained';
-        // Detention Policy:
-        // Do NOT increment current_semester. Keep current_semester unchanged.
-        // Set academic status to 'detained'.
-        student.academicStatus = 'detained';
-        detainedCount++;
-        reasonStr = `Under-criteria detention: CGPA ${effectiveGpa} (Cutoff: ${minGpa}) or failed courses (${failedCoursesCount}). Retained in Semester ${currentSem} for course repetition.`;
+        // Final Term: Semester 8 graduation audit
+        nextSem = 8;
+        const zeroPendingBacklogs = allActiveBacklogs.length === 0;
+        const meetsGraduationCredits = updatedCreditsEarned >= 130 || termCurriculum.length === passedCourses.length;
+
+        if (zeroPendingBacklogs && meetsGraduationCredits) {
+          academicStatus = 'graduated';
+          decision = 'graduated';
+          graduatedCount++;
+          reasonStr = `Graduation requirements conferred: Completed final semester with CGPA ${effectiveGpa}, earned ${updatedCreditsEarned} credits, 0 pending backlogs.`;
+        } else {
+          academicStatus = effectiveGpa < minGpa ? 'probation' : 'active';
+          decision = 'pending_graduation';
+          pendingGraduationCount++;
+          reasonStr = `Graduation deferred: Coursework evaluated (CGPA ${effectiveGpa}), but ${allActiveBacklogs.length} backlog course(s) remain uncleared (${allActiveBacklogs.map((b: any) => b.courseCode).join(', ')}). Must clear repeat courses for degree conferral.`;
+        }
       }
+
+      if (allActiveBacklogs.length > 0) {
+        carryingBacklogsCount++;
+      }
+
+      // Update student persistent record
+      student.semester = nextSem;
+      student.academicStatus = academicStatus;
+      student.cgpa = effectiveGpa;
+      student.creditsEarned = updatedCreditsEarned;
+      student.backlogCourses = allActiveBacklogs;
 
       if (isMongoConnected) {
         await student.save();
@@ -1279,14 +1428,18 @@ app.post('/api/admin/semesters/:id/publish-results-and-promote', async (req: Req
         studentId: student.id,
         studentName: student.name,
         rollNumber: student.rollNumber,
-        department: Array.isArray(student.departments) ? student.departments[0] : (student.department || 'Computer Science'),
+        department: studentDepts[0] || 'Computer Science',
         currentSemester: currentSem,
         nextSemester: nextSem,
         gpa: effectiveGpa,
-        creditsAttempted: totalAttemptedCredits,
-        creditsPassed: totalEarnedCredits,
-        passed,
+        creditsAttempted: termAttemptedCredits,
+        creditsPassed: termEarnedCredits,
+        passed: decision === 'promoted' || decision === 'graduated',
         decision,
+        academicStatus,
+        backlogsCount: allActiveBacklogs.length,
+        backlogs: allActiveBacklogs,
+        passedCourses,
         reason: reasonStr,
       });
 
@@ -1313,11 +1466,19 @@ app.post('/api/admin/semesters/:id/publish-results-and-promote', async (req: Req
       }
 
       // Automated Notification dispatched to student
-      const notifMsg = decision === 'promoted'
-        ? `Congratulations! Final term results for ${semester.name} have been published. You have met academic promotion criteria (CGPA: ${effectiveGpa}) and have been promoted to Semester ${nextSem}.`
-        : decision === 'graduated'
-        ? `Congratulations! Final results for ${semester.name} have been published. You have successfully fulfilled all degree graduation requirements!`
-        : `Academic Notice: Final results for ${semester.name} have been published. You have been placed on Detained (Semester Repeat) status due to academic requirements (CGPA: ${effectiveGpa}). You will repeat Semester ${currentSem} and any unearned courses in the upcoming term.`;
+      let notifMsg = '';
+      if (decision === 'promoted') {
+        notifMsg = `Congratulations! Final term results for ${semester.name} have been published. You have met academic promotion criteria (CGPA: ${effectiveGpa}) and have been promoted to Semester ${nextSem}.`;
+        if (allActiveBacklogs.length > 0) {
+          notifMsg += ` Note: You are carrying ${allActiveBacklogs.length} repeat course(s) (${allActiveBacklogs.map((b: any) => `${b.courseCode} - ${b.reason}`).join(', ')}). You must re-enroll in these courses during the upcoming registration window.`;
+        }
+      } else if (decision === 'promoted_probation') {
+        notifMsg = `Academic Advisory: Final term results for ${semester.name} have been published. You have been promoted to Semester ${nextSem} on Academic Probation (CGPA: ${effectiveGpa} < ${minGpa}). You are carrying ${allActiveBacklogs.length} repeat course backlog(s). Please consult your advisor and prioritize repeat course registration to improve your CGPA.`;
+      } else if (decision === 'graduated') {
+        notifMsg = `Heartiest Congratulations! Final degree evaluation for ${semester.name} is complete. You have earned ${updatedCreditsEarned} credits with 0 pending backlogs and have officially Graduated!`;
+      } else {
+        notifMsg = `Graduation Advisory: You have completed Semester 8 coursework, but graduation is deferred due to ${allActiveBacklogs.length} uncleared backlog course(s) (${allActiveBacklogs.map((b: any) => b.courseCode).join(', ')}). Please enroll in these repeat courses to complete degree requirements.`;
+      }
 
       const notifItem = {
         id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
@@ -1352,11 +1513,14 @@ app.post('/api/admin/semesters/:id/publish-results-and-promote', async (req: Req
       summary: {
         totalEvaluated: evaluatedResults.length,
         promotedCount,
-        detainedCount,
+        probationCount,
+        carryingBacklogsCount,
         graduatedCount,
+        pendingGraduationCount,
+        detainedCount: 0,
         results: evaluatedResults,
       },
-      message: `Final results declared for ${semester.name}. Processed ${evaluatedResults.length} students: ${promotedCount} Promoted, ${detainedCount} Detained, ${graduatedCount} Graduated.`,
+      message: `Final results declared for ${semester.name}. Processed ${evaluatedResults.length} students: ${promotedCount} Promoted (Active), ${probationCount} Promoted (Probation), ${carryingBacklogsCount} Carrying Backlogs, ${graduatedCount} Graduated.`,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1932,4 +2096,10 @@ async function startServer() {
   });
 }
 
-startServer();
+// In local dev and standard node hosting, start listening
+if (process.env.VERCEL !== '1' && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  startServer();
+}
+
+export default app;
+export { app, initMongoDB };

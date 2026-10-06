@@ -21,6 +21,7 @@ import {
   Search,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   TrendingUp,
   Award,
   Layers,
@@ -130,7 +131,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const teachers = users.filter((u) => u.role === 'teacher');
   const students = users.filter((u) => u.role === 'student');
   const adminUser = users.find((u) => u.role === 'admin') || (currentUser?.role === 'admin' ? currentUser : null);
-  const adminEmail = adminUser?.email || currentUser?.email || 'registrar@nicore.edu.pk';
+  const adminEmail = adminUser?.email || currentUser?.email || 'registrar@uet.edu.pk';
 
   // Delete User Confirmation State
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
@@ -163,7 +164,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Student Filter & Search states
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
-  const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | 'active' | 'detained' | 'graduated'>('all');
+  const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | 'active' | 'probation' | 'detained' | 'graduated'>('all');
   const [studentSemesterFilter, setStudentSemesterFilter] = useState<string>('all');
   const [studentDeptFilter, setStudentDeptFilter] = useState<string>('all');
 
@@ -641,28 +642,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <p className="text-xs text-slate-500 mt-1">
                 Overall system analytics, academic performance metrics, enrollment volume, and attendance compliance.
               </p>
-            </div>
-
-            {/* Semester Registration Window Quick Switcher */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 hidden sm:inline">Registration Window:</span>
-              <button
-                onClick={() => toggleSemesterRegistration(currentSemester.id)}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md border transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
-                  currentSemester.isRegistrationOpen
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
-                    : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 hover:border-rose-300'
-                }`}
-              >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    currentSemester.isRegistrationOpen ? 'bg-emerald-600 animate-pulse' : 'bg-rose-600'
-                  }`}
-                />
-                <span>
-                  {currentSemester.name}: {currentSemester.isRegistrationOpen ? 'Open (Toggle)' : 'Closed (Toggle)'}
-                </span>
-              </button>
             </div>
           </div>
 
@@ -1142,7 +1121,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <th className="py-2.5 px-4">Term Code</th>
                     <th className="py-2.5 px-4">Academic Duration</th>
                     <th className="py-2.5 px-4 text-center">Registration Window</th>
-                    <th className="py-2.5 px-4 text-center">Current Term</th>
                     <th className="py-2.5 px-4 text-center">Courses Offered</th>
                     <th className="py-2.5 px-4 text-center">Batch Promotion</th>
                     <th className="py-2.5 px-4 text-right">Actions</th>
@@ -1151,7 +1129,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <tbody className="divide-y divide-slate-100">
                   {sortedSemesters.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="py-8 text-center text-slate-400">
+                      <td colSpan={8} className="py-8 text-center text-slate-400">
                         No semesters configured. Click "+ Add Semester" to get started.
                       </td>
                     </tr>
@@ -1190,22 +1168,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               <span className={`w-1.5 h-1.5 rounded-full ${sem.isRegistrationOpen ? 'bg-emerald-600 animate-pulse' : 'bg-rose-600'}`} />
                               <span>{sem.isRegistrationOpen ? 'Open (Toggle)' : 'Closed (Toggle)'}</span>
                             </button>
-                          </td>
-                          <td className="py-2.5 px-4 text-center">
-                            {sem.isCurrent ? (
-                              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full font-bold text-[10px]">
-                                Active Current
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => updateSemester(sem.id, { isCurrent: true })}
-                                className="text-[11px] text-slate-400 hover:text-indigo-600 hover:underline cursor-pointer"
-                                title="Set as current active semester"
-                              >
-                                Set Current
-                              </button>
-                            )}
                           </td>
                           <td className="py-2.5 px-4 text-center font-mono font-semibold text-slate-700">
                             {semCourses.length} {semCourses.length === 1 ? 'course' : 'courses'}
@@ -1367,28 +1329,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     Reset
                   </button>
                 )}
-
-                <div className="hidden sm:block h-4 w-px bg-slate-300 mx-1 shrink-0" />
-
-                <button
-                  type="button"
-                  onClick={() => toggleSemesterRegistration(currentSemester.id)}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-md border transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                    currentSemester.isRegistrationOpen
-                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
-                      : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 hover:border-rose-300'
-                  }`}
-                  title="Toggle semester registration window open/closed for active current term"
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      currentSemester.isRegistrationOpen ? 'bg-emerald-600 animate-pulse' : 'bg-rose-600'
-                    }`}
-                  />
-                  <span>
-                    {currentSemester.name}: {currentSemester.isRegistrationOpen ? 'Registration Open' : 'Registration Closed'}
-                  </span>
-                </button>
               </div>
 
               {/* Search Box with non-collapsible minimum width */}
@@ -1825,7 +1765,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </span>
                 <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full flex items-center gap-1 font-mono">
                   <span>Domain:</span>
-                  <strong className="text-indigo-900">@{adminEmail.split('@')[1] || 'nicore.edu.pk'}</strong>
+                  <strong className="text-indigo-900">@{adminEmail.split('@')[1] || 'uet.edu.pk'}</strong>
                 </span>
                 <button
                   type="button"
@@ -1868,6 +1808,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 >
                   <option value="all">All Academic Statuses ({students.length})</option>
                   <option value="active">Active ({students.filter((s) => (s.academicStatus || 'active') === 'active').length})</option>
+                  <option value="probation">Probation ({students.filter((s) => s.academicStatus === 'probation').length})</option>
                   <option value="detained">Detained / Repeat ({students.filter((s) => s.academicStatus === 'detained' || s.academicStatus === 'repeat').length})</option>
                   <option value="graduated">Graduated ({students.filter((s) => s.academicStatus === 'graduated').length})</option>
                 </select>
@@ -2065,11 +2006,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               <GraduationCap className="w-2.5 h-2.5 text-purple-600 shrink-0" />
                               <span>Graduated</span>
                             </span>
+                          ) : s.academicStatus === 'probation' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                              <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                              <span>Probation</span>
+                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
                               <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
                               <span>Active</span>
                             </span>
+                          )}
+                          {s.backlogCourses && s.backlogCourses.filter((b) => b.status !== 'cleared').length > 0 && (
+                            <div className="mt-1">
+                              <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                {s.backlogCourses.filter((b) => b.status !== 'cleared').length} Repeat(s)
+                              </span>
+                            </div>
                           )}
                         </td>
 
@@ -2223,7 +2176,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <Sparkles className="w-3 h-3 text-indigo-500 shrink-0" />
                         <span>Roll: <strong className="text-indigo-700">2026-{dept.code}-01</strong></span>
                       </div>
-                      <span className="text-slate-400">@{adminEmail.split('@')[1] || 'nicore.edu.pk'}</span>
+                      <span className="text-slate-400">@{adminEmail.split('@')[1] || 'uet.edu.pk'}</span>
                     </div>
 
                     {/* HOD Status Card */}
@@ -2427,7 +2380,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     >
                       {sortedSemesters.map((s) => (
                         <option key={s.id} value={s.id}>
-                          {s.name} (Semester {s.number}) {s.isCurrent ? '— Current' : ''}
+                          {s.name} (Semester {s.number})
                         </option>
                       ))}
                     </select>

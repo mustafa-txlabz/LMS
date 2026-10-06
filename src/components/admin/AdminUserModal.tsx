@@ -55,10 +55,10 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
 
   // Extract university domain from the admin user or current user
   const adminUser = users.find((u) => u.role === 'admin') || (currentUser?.role === 'admin' ? currentUser : null);
-  const adminEmail = adminUser?.email || currentUser?.email || 'registrar@nicore.edu.pk';
+  const adminEmail = adminUser?.email || currentUser?.email || 'registrar@uet.edu.pk';
   const adminDomain = adminEmail.includes('@')
     ? adminEmail.split('@')[1].trim().toLowerCase()
-    : 'nicore.edu.pk';
+    : 'uet.edu.pk';
 
   // Multi-department state for faculty members
   const initialDepartments = useMemo(() => {

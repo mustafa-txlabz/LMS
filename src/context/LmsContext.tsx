@@ -508,7 +508,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): Promise<{ success: boolean; error?: string; count?: number }> => {
     const cleanDomain = newDomain.replace(/^@/, '').trim().toLowerCase();
     if (!cleanDomain || !cleanDomain.includes('.')) {
-      return { success: false, error: 'Please enter a valid domain format (e.g. nicore.edu.pk or campus.edu)' };
+      return { success: false, error: 'Please enter a valid domain format (e.g. uet.edu.pk or campus.edu)' };
     }
 
     try {
@@ -829,17 +829,35 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               return {
                 ...u,
                 semester: res.nextSemester,
-                academicStatus: res.decision === 'graduated' ? 'graduated' : (res.decision === 'detained' ? 'detained' : 'active'),
+                academicStatus: res.academicStatus || (res.decision === 'graduated' ? 'graduated' : res.decision === 'promoted_probation' ? 'probation' : 'active'),
+                cgpa: res.gpa,
+                creditsEarned: (u.creditsEarned || 0) + (res.creditsPassed || 0),
+                backlogCourses: res.backlogs || [],
               };
             }
             return u;
           })
         );
+
+        // Also update currentUser if currently logged in student was evaluated
+        if (currentUser && currentUser.role === 'student') {
+          const res = data.summary.results.find((r: any) => r.studentId === currentUser.id);
+          if (res) {
+            setCurrentUser((prev: any) => ({
+              ...prev,
+              semester: res.nextSemester,
+              academicStatus: res.academicStatus || (res.decision === 'graduated' ? 'graduated' : res.decision === 'promoted_probation' ? 'probation' : 'active'),
+              cgpa: res.gpa,
+              creditsEarned: (prev?.creditsEarned || 0) + (res.creditsPassed || 0),
+              backlogCourses: res.backlogs || [],
+            }));
+          }
+        }
       }
 
       return { success: true, summary: data.summary };
     } catch {
-      // Local fallback evaluation
+      // Local fallback evaluation (Credit-Hour Progression & Backlog Tagging Model)
       const sem = semesters.find((s) => s.id === semesterId);
       if (!sem) return { success: false, error: 'Semester not found.' };
 
@@ -849,81 +867,172 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const semStudents = users.filter((u) => u.role === 'student' && (u.semester === sem.number || enrollments.some((e) => e.studentId === u.id && semCourseIds.has(e.courseId))));
 
       const evaluatedResults: any[] = [];
-      let promoted = 0;
-      let detained = 0;
-      let graduated = 0;
+      let promotedCount = 0;
+      let probationCount = 0;
+      let carryingBacklogsCount = 0;
+      let graduatedCount = 0;
+      let pendingGraduationCount = 0;
 
       const updatedUsers = users.map((u) => {
         if (!semStudents.some((s) => s.id === u.id)) return u;
 
-        const effectiveGpa = u.cgpa || 3.0;
-        const passed = effectiveGpa >= minGpa;
-        const curSem = u.semester || sem.number;
-        let nextSem = curSem;
-        let decision: 'promoted' | 'detained' | 'graduated' = 'promoted';
+        const currentSem = u.semester || sem.number;
+        const studentDepts = getUserDepartments(u);
+
+        // Curriculum courses for student's department in this semester
+        let termCurriculum = semCourses.filter((c) =>
+          studentDepts.some((d) => d.trim().toLowerCase() === (c.department || '').trim().toLowerCase()) ||
+          c.department === 'All' || c.department === 'General'
+        );
+        if (termCurriculum.length === 0) termCurriculum = semCourses;
+
+        const passedCourses: Array<{ courseId: string; courseCode: string; credits: number; grade: string }> = [];
+        const termBacklogs: any[] = [];
+        let termQualityPoints = 0;
+        let termAttemptedCredits = 0;
+        let termEarnedCredits = 0;
+
+        termCurriculum.forEach((course) => {
+          const cr = course.creditHours || 3;
+          termAttemptedCredits += cr;
+
+          const isEnrolled = enrollments.some(
+            (e) => e.studentId === u.id && e.courseId === course.id && e.status === 'registered'
+          );
+
+          if (!isEnrolled) {
+            termBacklogs.push({
+              courseId: course.id,
+              courseCode: course.code,
+              courseTitle: course.title,
+              creditHours: cr,
+              semesterOffered: sem.number,
+              reason: 'missed' as const,
+              status: 'pending' as const,
+              detectedAt: new Date().toISOString().slice(0, 10),
+            });
+          } else {
+            const gradeRec = grades.find((g) => g.courseId === course.id && g.studentId === u.id);
+            const marks = gradeRec?.marks;
+            const isFailed = marks ? (marks.letterGrade === 'F' || (marks.total !== undefined && marks.total < 50)) : false;
+
+            if (isFailed) {
+              termBacklogs.push({
+                courseId: course.id,
+                courseCode: course.code,
+                courseTitle: course.title,
+                creditHours: cr,
+                semesterOffered: sem.number,
+                reason: 'failed' as const,
+                grade: marks?.letterGrade || 'F',
+                status: 'pending' as const,
+                detectedAt: new Date().toISOString().slice(0, 10),
+              });
+            } else {
+              const gp = marks?.gradePoints !== undefined ? marks.gradePoints : 3.0;
+              termEarnedCredits += cr;
+              termQualityPoints += gp * cr;
+              passedCourses.push({
+                courseId: course.id,
+                courseCode: course.code,
+                credits: cr,
+                grade: marks?.letterGrade || 'B',
+              });
+            }
+          }
+        });
+
+        // Retain uncleared prior backlogs
+        const priorBacklogs: any[] = Array.isArray(u.backlogCourses) ? u.backlogCourses : [];
+        const updatedPriorBacklogs = priorBacklogs.filter(
+          (b) => !passedCourses.some((p) => p.courseId === b.courseId || p.courseCode === b.courseCode) && b.status !== 'cleared'
+        );
+
+        const allActiveBacklogs = [...updatedPriorBacklogs];
+        termBacklogs.forEach((tb) => {
+          if (!allActiveBacklogs.some((b) => b.courseId === tb.courseId || b.courseCode === tb.courseCode)) {
+            allActiveBacklogs.push(tb);
+          }
+        });
+
+        const prevCredits = typeof u.creditsEarned === 'number' ? u.creditsEarned : (currentSem > 1 ? (currentSem - 1) * 16 : 0);
+        const updatedCreditsEarned = prevCredits + termEarnedCredits;
+
+        const termGpa = termAttemptedCredits > 0
+          ? Number((termQualityPoints / termAttemptedCredits).toFixed(2))
+          : (u.cgpa || 3.0);
+        const effectiveGpa = u.cgpa ? Number(((u.cgpa + termGpa) / 2).toFixed(2)) : termGpa;
+
+        let nextSem = currentSem;
+        let decision: 'promoted' | 'promoted_probation' | 'graduated' | 'pending_graduation' = 'promoted';
+        let academicStatus: 'active' | 'probation' | 'graduated' = 'active';
         let reasonStr = '';
 
-        if (passed) {
-          if (curSem >= 8) {
-            decision = 'graduated';
-            graduated++;
-            reasonStr = `Completed Semester 8 with CGPA ${effectiveGpa}. Conferred Graduation.`;
-            evaluatedResults.push({
-              studentId: u.id,
-              studentName: u.name,
-              rollNumber: u.rollNumber,
-              department: u.departments[0] || 'Computer Science',
-              currentSemester: curSem,
-              nextSemester: curSem,
-              gpa: effectiveGpa,
-              creditsAttempted: 15,
-              creditsPassed: 15,
-              passed: true,
-              decision,
-              reason: reasonStr,
-            });
-            return { ...u, academicStatus: 'graduated' as const };
-          } else {
+        if (currentSem < 8) {
+          nextSem = currentSem + 1;
+          if (effectiveGpa >= minGpa) {
+            academicStatus = 'active';
             decision = 'promoted';
-            nextSem = curSem + 1;
-            promoted++;
-            reasonStr = `Met promotion threshold (CGPA ${effectiveGpa} >= ${minGpa}). Promoted to Semester ${nextSem}.`;
-            evaluatedResults.push({
-              studentId: u.id,
-              studentName: u.name,
-              rollNumber: u.rollNumber,
-              department: u.departments[0] || 'Computer Science',
-              currentSemester: curSem,
-              nextSemester: nextSem,
-              gpa: effectiveGpa,
-              creditsAttempted: 15,
-              creditsPassed: 15,
-              passed: true,
-              decision,
-              reason: reasonStr,
-            });
-            return { ...u, semester: nextSem, academicStatus: 'active' as const };
+            promotedCount++;
+            reasonStr = `Satisfactory academic progress (CGPA ${effectiveGpa} >= ${minGpa}, earned ${termEarnedCredits} Cr). Promoted to Semester ${nextSem}.`;
+          } else {
+            academicStatus = 'probation';
+            decision = 'promoted_probation';
+            probationCount++;
+            reasonStr = `Academic Probation advisory: CGPA ${effectiveGpa} < ${minGpa}. Promoted to Semester ${nextSem} under observation. Course retakes required.`;
+          }
+          if (allActiveBacklogs.length > 0) {
+            reasonStr += ` Carrying ${allActiveBacklogs.length} repeat course(s): ${allActiveBacklogs.map((b) => b.courseCode).join(', ')}.`;
           }
         } else {
-          decision = 'detained';
-          detained++;
-          reasonStr = `Detention / Repeat policy: CGPA ${effectiveGpa} < ${minGpa}. Retained in Semester ${curSem} for course repetition.`;
-          evaluatedResults.push({
-            studentId: u.id,
-            studentName: u.name,
-            rollNumber: u.rollNumber,
-            department: u.departments[0] || 'Computer Science',
-            currentSemester: curSem,
-            nextSemester: curSem,
-            gpa: effectiveGpa,
-            creditsAttempted: 15,
-            creditsPassed: 6,
-            passed: false,
-            decision,
-            reason: reasonStr,
-          });
-          return { ...u, academicStatus: 'detained' as const };
+          nextSem = 8;
+          const zeroPendingBacklogs = allActiveBacklogs.length === 0;
+          const meetsGraduationCredits = updatedCreditsEarned >= 130 || termCurriculum.length === passedCourses.length;
+
+          if (zeroPendingBacklogs && meetsGraduationCredits) {
+            academicStatus = 'graduated';
+            decision = 'graduated';
+            graduatedCount++;
+            reasonStr = `Graduation requirements conferred: Completed final semester with CGPA ${effectiveGpa}, earned ${updatedCreditsEarned} credits, 0 pending backlogs.`;
+          } else {
+            academicStatus = effectiveGpa < minGpa ? 'probation' : 'active';
+            decision = 'pending_graduation';
+            pendingGraduationCount++;
+            reasonStr = `Graduation deferred: Coursework evaluated (CGPA ${effectiveGpa}), but ${allActiveBacklogs.length} backlog course(s) remain uncleared (${allActiveBacklogs.map((b) => b.courseCode).join(', ')}). Must clear before degree conferral.`;
+          }
         }
+
+        if (allActiveBacklogs.length > 0) {
+          carryingBacklogsCount++;
+        }
+
+        evaluatedResults.push({
+          studentId: u.id,
+          studentName: u.name,
+          rollNumber: u.rollNumber,
+          department: studentDepts[0] || 'Computer Science',
+          currentSemester: currentSem,
+          nextSemester: nextSem,
+          gpa: effectiveGpa,
+          creditsAttempted: termAttemptedCredits,
+          creditsPassed: termEarnedCredits,
+          passed: decision === 'promoted' || decision === 'graduated',
+          decision,
+          academicStatus,
+          backlogsCount: allActiveBacklogs.length,
+          backlogs: allActiveBacklogs,
+          passedCourses,
+          reason: reasonStr,
+        });
+
+        return {
+          ...u,
+          semester: nextSem,
+          academicStatus,
+          cgpa: effectiveGpa,
+          creditsEarned: updatedCreditsEarned,
+          backlogCourses: allActiveBacklogs,
+        };
       });
 
       setUsers(updatedUsers);
@@ -939,9 +1048,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         success: true,
         summary: {
           totalEvaluated: evaluatedResults.length,
-          promotedCount: promoted,
-          detainedCount: detained,
-          graduatedCount: graduated,
+          promotedCount,
+          probationCount,
+          carryingBacklogsCount,
+          graduatedCount,
+          pendingGraduationCount,
+          detainedCount: 0,
           results: evaluatedResults,
         },
       };
@@ -1269,8 +1381,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Course or student record not found.' };
     }
 
-    if (!currentSemester.isRegistrationOpen) {
-      return { success: false, message: 'Semester registration is currently closed.' };
+    const courseSem = semesters.find(
+      (s) => s.id === course.semesterId || s.number === course.semesterNumber
+    ) || currentSemester;
+
+    if (courseSem && !courseSem.isRegistrationOpen) {
+      return { success: false, message: `Registration for ${courseSem.name} is currently closed.` };
     }
 
     const existing = enrollments.find(
