@@ -1,10 +1,9 @@
-import express, { Request, Response } from 'express';
-import mongoose from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import mongooseLib from 'mongoose';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
 import {
   INITIAL_USERS,
   INITIAL_SEMESTERS,
@@ -27,18 +26,6 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// MongoDB connection ensure middleware (for serverless environments like Vercel)
-app.use(async (_req: Request, _res: Response, next) => {
-  if (!isMongoConnected && mongoUri) {
-    try {
-      await initMongoDB();
-    } catch {
-      // continues with in-memory fallback
-    }
-  }
-  next();
-});
-
 // MongoDB URI from environment
 const rawMongoUri = process.env.MONGODB_URI || '';
 // Format URI safely ensuring password with @ is encoded if needed
@@ -58,6 +45,27 @@ if (mongoUri && mongoUri.includes('@') && !mongoUri.includes('%40')) {
     }
   }
 }
+
+// Request path normalizer for Vercel serverless rewrites
+app.use((req: Request, _res: Response, next) => {
+  const matchedPath = (req.headers['x-matched-path'] || req.headers['x-now-route-matches']) as string | undefined;
+  if (matchedPath && matchedPath.startsWith('/api') && req.url !== matchedPath) {
+    req.url = matchedPath;
+  }
+  next();
+});
+
+// MongoDB connection ensure middleware (for serverless environments like Vercel)
+app.use(async (_req: Request, _res: Response, next) => {
+  if (!isMongoConnected && mongoUri) {
+    try {
+      await initMongoDB();
+    } catch {
+      // continues with in-memory fallback
+    }
+  }
+  next();
+});
 
 // -------------------------------------------------------------
 // MongoDB Schemas & Models
@@ -2097,7 +2105,8 @@ async function startServer() {
   await initMongoDB();
 
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
+    const { createServer } = await import('vite');
+    const vite = await createServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });

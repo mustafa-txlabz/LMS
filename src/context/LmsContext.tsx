@@ -205,13 +205,23 @@ export function calculateGradeDetails(
 export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'users');
-    const raw = saved ? JSON.parse(saved) : INITIAL_USERS;
+    let raw = saved ? JSON.parse(saved) : INITIAL_USERS;
+
+    // If local cache contains outdated legacy email domain or missing students, purge obsolete cache
+    const hasLegacyDomain = Array.isArray(raw) && raw.some((u: any) => u.email && u.email.includes('@nicore.edu.pk'));
+    const hasOutdatedRoll = Array.isArray(raw) && raw.some((u: any) => u.name === 'Alex Johnson' && u.rollNumber === '29');
+    if (hasLegacyDomain || hasOutdatedRoll) {
+      raw = INITIAL_USERS;
+    }
+
     return raw.map((u: any) => {
       const depts = Array.isArray(u.departments) && u.departments.length > 0
         ? u.departments
         : (u.department ? [u.department] : ['Computer Science']);
+      const email = typeof u.email === 'string' ? u.email.replace(/@nicore\.edu\.pk$/i, '@uet.edu.pk') : u.email;
       return {
         ...u,
+        email,
         departments: depts,
         department: depts[0],
       };

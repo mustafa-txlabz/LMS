@@ -1,4 +1,4 @@
-import { User, Semester, Course, Enrollment, CourseGradeRecord, LectureSession, AutomatedNotification, Department, SemesterProgressionAuditLog } from '../types';
+import type { User, Semester, Course, Enrollment, CourseGradeRecord, LectureSession, AutomatedNotification, Department, SemesterProgressionAuditLog } from '../types/index.ts';
 
 export const INITIAL_USERS: User[] = [
   // Admin
