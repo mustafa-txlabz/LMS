@@ -378,11 +378,14 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Auth: Login
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = password.trim();
+
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: cleanEmail, password: cleanPass }),
       });
 
       if (res.ok) {
@@ -390,20 +393,30 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentUser(data.user);
         return { success: true };
       }
+
+      // If backend responded with an error (e.g. 401 incorrect password or user not found)
+      const errData = await res.json().catch(() => null);
+      if (errData && errData.error) {
+        return { success: false, error: errData.error };
+      }
     } catch {
-      // Fallback to local users validation
+      // Fallback to local users validation in case backend is unreachable
     }
 
     // Local authentication fallback
     const matchedUser = users.find(
-      (u) => u.email.toLowerCase() === email.trim().toLowerCase()
+      (u) =>
+        u.email.toLowerCase() === cleanEmail ||
+        (u.rollNumber && String(u.rollNumber).toLowerCase() === cleanEmail) ||
+        u.email.toLowerCase().startsWith(`${cleanEmail}@`)
     );
 
     if (!matchedUser) {
-      return { success: false, error: 'No user account found with this email address.' };
+      return { success: false, error: 'No user account found with this email address or roll number.' };
     }
 
-    if (matchedUser.password && matchedUser.password !== password) {
+    const userPass = String(matchedUser.password || '').trim();
+    if (userPass && userPass !== cleanPass) {
       return { success: false, error: 'Incorrect password entered.' };
     }
 

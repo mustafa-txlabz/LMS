@@ -13,54 +13,72 @@ import {
   KeyRound,
   AlertCircle,
   Sparkles,
+  Check,
+  Database,
+  Users,
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const { login, users } = useLms();
 
-  const adminUser = useMemo(() => users.find((u) => u.role === 'admin'), [users]);
-  const teacherUser = useMemo(() => users.find((u) => u.role === 'teacher'), [users]);
-  const studentUser = useMemo(() => users.find((u) => u.role === 'student'), [users]);
-
-  const defaultAdminEmail = adminUser?.email || 'registrar@uet.edu.pk';
-  const defaultStudentEmail = studentUser?.email || '2021-cs-29@uet.edu.pk';
-  const defaultTeacherEmail = teacherUser?.email || 's.jenkins@unicore.edu';
-
   const [activePortal, setActivePortal] = useState<'student' | 'teacher' | 'admin'>('student');
-  const [email, setEmail] = useState(defaultStudentEmail);
+
+  // Filter users by the selected portal role
+  const portalUsers = useMemo(() => {
+    const roleTarget = activePortal === 'teacher' ? 'teacher' : activePortal;
+    return users.filter((u) => u.role === roleTarget);
+  }, [users, activePortal]);
+
+  // Default credentials for the current portal
+  const activeFirstUser = portalUsers[0];
+
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('password123');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Synchronize email when switching portals
+  // Keep email and password updated with actual database users
+  useEffect(() => {
+    if (portalUsers.length > 0) {
+      // Check if current email matches any user in the current portal list
+      const matched = portalUsers.find(
+        (u) =>
+          u.email.toLowerCase() === email.trim().toLowerCase() ||
+          (u.rollNumber && String(u.rollNumber).toLowerCase() === email.trim().toLowerCase())
+      );
+      if (matched) {
+        // Keep credentials synchronized with the matched DB user
+        setPassword(matched.password || 'password123');
+      } else {
+        // Automatically default to the first real user in this portal from the database
+        setEmail(portalUsers[0].email);
+        setPassword(portalUsers[0].password || 'password123');
+      }
+    }
+  }, [portalUsers, activePortal]);
+
+  // Switch persona credentials when clicking portal tabs
   const handleSelectPortal = (portal: 'student' | 'teacher' | 'admin') => {
     setActivePortal(portal);
     setError(null);
-    if (portal === 'student') {
-      setEmail(defaultStudentEmail);
-      setPassword('password123');
-    } else if (portal === 'teacher') {
-      setEmail(defaultTeacherEmail);
-      setPassword('password123');
-    } else {
-      setEmail(defaultAdminEmail);
-      setPassword('password123');
+    const roleTarget = portal === 'teacher' ? 'teacher' : portal;
+    const targetUsers = users.filter((u) => u.role === roleTarget);
+    if (targetUsers.length > 0) {
+      setEmail(targetUsers[0].email);
+      setPassword(targetUsers[0].password || 'password123');
     }
   };
 
-  // If bootstrap users load with the updated domain, keep the pre-filled email current
-  useEffect(() => {
-    if (activePortal === 'admin' && adminUser?.email) {
-      if (email.includes('nicore') || email.includes('unicore.edu') || !email) {
-        setEmail(adminUser.email);
-      }
-    } else if (activePortal === 'student' && studentUser?.email) {
-      if (email.includes('nicore') || !email) {
-        setEmail(studentUser.email);
-      }
+  // Directly select a specific user from the database
+  const handleSelectUser = (userEmail: string) => {
+    setError(null);
+    const target = portalUsers.find((u) => u.email === userEmail);
+    if (target) {
+      setEmail(target.email);
+      setPassword(target.password || 'password123');
     }
-  }, [adminUser?.email, studentUser?.email, activePortal]);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,6 +92,14 @@ export const LoginPage: React.FC = () => {
       setError(result.error || 'Authentication failed. Please verify credentials.');
     }
   };
+
+  // Identify currently matched user for preview badge
+  const currentMatchedUser = portalUsers.find(
+    (u) =>
+      u.email.toLowerCase() === email.trim().toLowerCase() ||
+      (u.rollNumber && String(u.rollNumber).toLowerCase() === email.trim().toLowerCase()) ||
+      u.email.toLowerCase().startsWith(`${email.trim().toLowerCase()}@`)
+  );
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 selection:bg-indigo-500 selection:text-white relative overflow-hidden">
@@ -139,50 +165,74 @@ export const LoginPage: React.FC = () => {
           </div>
 
           <div className="p-6 sm:p-8 space-y-5">
-            {/* Quick Demo Credentials Autofill Banner */}
-            <div className="p-3 bg-slate-900/70 border border-slate-700/70 rounded-xl text-xs space-y-1.5">
+            {/* Database Account Selector & Quick Fill */}
+            <div className="p-3.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs space-y-2.5">
               <div className="flex items-center justify-between text-slate-400">
-                <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Demo Account:</span>
+                <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Database className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Database Registered Accounts ({portalUsers.length}):</span>
                 </span>
-                <span className="font-mono text-indigo-400 font-medium">Default: password123</span>
+                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-mono bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-800/40">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>DB Synchronized</span>
+                </span>
               </div>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActivePortal('student');
-                    setEmail(defaultStudentEmail);
-                    setPassword('password123');
-                  }}
-                  className="px-2 py-1 bg-slate-800 hover:bg-indigo-900/50 text-slate-300 hover:text-indigo-200 border border-slate-700 hover:border-indigo-500 rounded text-[11px] font-mono transition-all duration-150 active:scale-95 cursor-pointer"
-                >
-                  {studentUser?.name ? `${studentUser.name.split(' ')[0]} (Student)` : 'Student Demo'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActivePortal('teacher');
-                    setEmail(defaultTeacherEmail);
-                    setPassword('password123');
-                  }}
-                  className="px-2 py-1 bg-slate-800 hover:bg-blue-900/50 text-slate-300 hover:text-blue-200 border border-slate-700 hover:border-blue-500 rounded text-[11px] font-mono transition-all duration-150 active:scale-95 cursor-pointer"
-                >
-                  {teacherUser?.name ? teacherUser.name.split(' ')[1] || teacherUser.name : 'Faculty Demo'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActivePortal('admin');
-                    setEmail(defaultAdminEmail);
-                    setPassword('password123');
-                  }}
-                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:border-slate-500 rounded text-[11px] font-mono transition-all duration-150 active:scale-95 cursor-pointer"
-                >
-                  {adminUser?.name ? `${adminUser.name.split(' ')[0]} (Admin)` : 'Registrar (Admin)'}
-                </button>
+
+              {/* Quick Select Account Dropdown */}
+              {portalUsers.length > 0 && (
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                    Auto-Fill Credentials from Database:
+                  </label>
+                  <select
+                    value={email}
+                    onChange={(e) => handleSelectUser(e.target.value)}
+                    className="w-full py-1.5 px-2.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    {portalUsers.map((u) => (
+                      <option key={u.id} value={u.email}>
+                        {u.name} — {u.email} {u.rollNumber ? `(Roll: ${u.rollNumber})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Quick Click Badges for each user in this portal */}
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {portalUsers.map((u) => {
+                  const isSelected = u.email.toLowerCase() === email.toLowerCase();
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => handleSelectUser(u.email)}
+                      className={`px-2 py-1 rounded text-[11px] font-mono transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1 border ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white border-indigo-400 shadow-sm shadow-indigo-600/40 font-semibold'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700'
+                      }`}
+                    >
+                      {isSelected && <Check className="w-3 h-3 text-white shrink-0" />}
+                      <span>{u.name.split(' ')[0]}</span>
+                      <span className="opacity-70 text-[10px]">
+                        ({u.rollNumber ? u.rollNumber : u.role})
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
+
+              {currentMatchedUser && (
+                <div className="pt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800">
+                  <span className="truncate">
+                    Active: <strong className="text-indigo-300">{currentMatchedUser.name}</strong>
+                  </span>
+                  <span className="font-mono text-emerald-400 text-[10px] shrink-0">
+                    Ready to Sign In
+                  </span>
+                </div>
+              )}
             </div>
 
             {error && (
@@ -194,19 +244,20 @@ export const LoginPage: React.FC = () => {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  University Email Address
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+                  <span>University Email or Roll Number</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Supports Full Email or Roll No</span>
                 </label>
                 <div className="relative group">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500 group-focus-within:text-indigo-400 transition-colors">
                     <Mail className="w-4 h-4" />
                   </div>
                   <input
-                    type="email"
+                    type="text"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder={`e.g. ${defaultAdminEmail}`}
+                    placeholder={activeFirstUser?.email || 'e.g. 2026-cs-042@uet.edu.pk'}
                     className="w-full pl-10 pr-3.5 py-2.5 bg-slate-900/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-mono"
                   />
                 </div>

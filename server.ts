@@ -432,21 +432,39 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
+  const cleanQuery = String(email).trim().toLowerCase();
+  const cleanPass = String(password).trim();
+  const escapeRegex = (s: string) => s.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const safeRegex = new RegExp(`^${escapeRegex(cleanQuery)}$`, 'i');
+  const prefixRegex = new RegExp(`^${escapeRegex(cleanQuery)}@`, 'i');
+
   try {
     let user: any = null;
     if (isMongoConnected) {
-      user = await UserModel.findOne({ email: email.trim().toLowerCase() }).lean();
+      user = await UserModel.findOne({
+        $or: [
+          { email: safeRegex },
+          { rollNumber: safeRegex },
+          { email: prefixRegex },
+        ],
+      }).lean();
     } else {
-      user = memoryUsers.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
+      user = memoryUsers.find(
+        (u) =>
+          u.email.toLowerCase() === cleanQuery ||
+          (u.rollNumber && String(u.rollNumber).toLowerCase() === cleanQuery) ||
+          u.email.toLowerCase().startsWith(`${cleanQuery}@`)
+      );
     }
 
     if (!user) {
-      return res.status(401).json({ error: 'No account found with this email address' });
+      return res.status(401).json({ error: 'No account found with this email address or roll number.' });
     }
 
     // Check password
-    if (user.password && user.password !== password) {
-      return res.status(401).json({ error: 'Incorrect password entered' });
+    const userPass = String(user.password || '').trim();
+    if (userPass && userPass !== cleanPass) {
+      return res.status(401).json({ error: 'Incorrect password entered.' });
     }
 
     // Return sanitized user
