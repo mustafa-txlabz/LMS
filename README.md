@@ -66,11 +66,15 @@ Course enrollment permissions in UniCore LMS are governed directly and exclusive
 
 ## 🔍 Course & Faculty Filtering Systems
 
-### Courses Directory Filtering
+### Courses Directory & Scheduling Architecture
 - **Filter Semester:** Dropdown strictly populated with active configured terms from the Semesters Directory (e.g., `All Configured Semesters`, `Fall 2026 (Semester 5)`, `Spring 2026 (Semester 4)`).
 - **Filter Department:** Dropdown populated with registered university faculties (e.g., `Computer Science (CS)`, `Software Engineering (SE)`, `Electrical Engineering (EE)`), with live course counts.
 - **Search Box:** Fixed-width, non-collapsible search field with real-time matching across course code, title, teacher name, and department, plus an instant clear (`×`) button.
 - **Quick Reset:** A dedicated `Reset` button appears whenever any combination of filters or search queries is active.
+- **Course Type (Required):**
+  - **Theory:** Standard 3 Credit Hours. Enforces strict validation requiring **exactly 2 scheduled days** (no single day, no more than 2 days allowed).
+  - **Lab:** Standard 1 Credit Hour. Enforces strict validation requiring **exactly 1 scheduled day**.
+- **Interactive Weekday Schedule Picker:** Individual time slot selectors for each day of the week (Monday through Saturday) with an **Open Time** dropdown, real-time live preview, day counter, and direct removal (`×`) buttons. Full bidirectional persistence with MongoDB Atlas.
 
 ### Faculty Directory Table & Multi-Criteria Filtering
 - **Table Presentation:** Clean tabular layout presenting instructor profile (avatar, name, email), affiliated departments, academic designation, leadership/HOD status (`👑 HOD`), assigned course badges, and direct actions.

@@ -210,8 +210,17 @@ E. ADDING & EDITING COURSES
      semesters in the directory.
    - "Semester Number" is automatically synchronized and locked to the selected 
      semester, preventing mismatched data entries.
-   - Select the responsible academic department, credit hours, schedule time, 
-     room/venue, maximum student capacity, and appointed faculty instructor.
+   - "Course Type": Required dropdown with two options:
+     * Theory: 3 Credit Hours standard. Strictly enforced validation requiring exactly 
+       2 scheduled days (e.g., Monday & Wednesday or Tuesday & Thursday).
+     * Lab: 1 Credit Hour standard. Strictly enforced validation requiring exactly 
+       1 scheduled day (e.g., Friday).
+   - "Class Schedule & Timings": Interactive weekday slot selector (Monday through 
+     Saturday) with an "Open Time" dropdown for each day. Selecting a time slot marks 
+     that day as active. Includes live validation counters, preset options, and real-time 
+     schedule preview.
+   - Select the responsible academic department, credit hours, room/venue, maximum student 
+     capacity, and appointed faculty instructor. Fully synchronized with MongoDB.
 
 --------------------------------------------------------------------------------
 2.4 ACADEMIC DEPARTMENTS DIRECTORY

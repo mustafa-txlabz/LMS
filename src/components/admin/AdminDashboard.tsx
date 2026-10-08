@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLms } from '../../context/LmsContext';
-import { Course, Semester, User, Department } from '../../types';
+import { Course, Semester, User, Department, CourseType } from '../../types';
 import { AdminUserModal } from './AdminUserModal';
 import { AdminDepartmentModal } from './AdminDepartmentModal';
 import { StudentSemesterOverrideModal } from './StudentSemesterOverrideModal';
@@ -38,7 +38,100 @@ import {
   SlidersHorizontal,
   RotateCcw,
   Filter,
+  Clock,
+  X,
 } from 'lucide-react';
+
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+
+const STANDARD_TIME_SLOTS = [
+  '08:30 AM – 10:00 AM',
+  '10:00 AM – 11:30 AM',
+  '11:30 AM – 01:00 PM',
+  '01:00 PM – 02:30 PM',
+  '02:30 PM – 04:00 PM',
+  '04:00 PM – 05:30 PM',
+];
+
+const LAB_TIME_SLOTS = [
+  '08:30 AM – 11:30 AM (Morning Lab · 3 hrs)',
+  '10:00 AM – 01:00 PM (Midday Lab · 3 hrs)',
+  '01:00 PM – 04:00 PM (Afternoon Lab · 3 hrs)',
+  '02:00 PM – 05:00 PM (Evening Lab · 3 hrs)',
+  '08:30 AM – 10:30 AM (2 hrs Lab)',
+  '02:00 PM – 04:00 PM (2 hrs Lab)',
+];
+
+function formatSlotsToSchedule(slots: Record<string, string>): string {
+  const entries = Object.entries(slots).filter(([_, time]) => Boolean(time && time.trim()));
+  if (entries.length === 0) return '';
+
+  const dayShortMap: Record<string, string> = {
+    Monday: 'Mon',
+    Tuesday: 'Tue',
+    Wednesday: 'Wed',
+    Thursday: 'Thu',
+    Friday: 'Fri',
+    Saturday: 'Sat',
+  };
+
+  const times = entries.map(([_, time]) => time);
+  const allSameTime = times.every((t) => t === times[0]);
+
+  if (allSameTime) {
+    const dayNames = entries.map(([day]) => dayShortMap[day] || day).join(' & ');
+    return `${dayNames} · ${times[0]}`;
+  }
+
+  return entries
+    .map(([day, time]) => `${dayShortMap[day] || day} · ${time}`)
+    .join(' & ');
+}
+
+function parseScheduleStringToSlots(schedule: string): Record<string, string> {
+  if (!schedule) return {};
+  const slots: Record<string, string> = {};
+  const dayAliases: Record<string, string> = {
+    mon: 'Monday',
+    monday: 'Monday',
+    tue: 'Tuesday',
+    tues: 'Tuesday',
+    tuesday: 'Tuesday',
+    wed: 'Wednesday',
+    wednesday: 'Wednesday',
+    thu: 'Thursday',
+    thur: 'Thursday',
+    thurs: 'Thursday',
+    thursday: 'Thursday',
+    fri: 'Friday',
+    friday: 'Friday',
+    sat: 'Saturday',
+    saturday: 'Saturday',
+  };
+
+  if (schedule.includes('·')) {
+    const [daysPart, timePart] = schedule.split('·').map((s) => s.trim());
+    const matchedTime = timePart || '';
+    const dayTokens = daysPart.toLowerCase().split(/[&,/+]/).map((s) => s.trim());
+    dayTokens.forEach((token) => {
+      const canonical = dayAliases[token];
+      if (canonical && matchedTime) {
+        slots[canonical] = matchedTime;
+      }
+    });
+    if (Object.keys(slots).length > 0) return slots;
+  }
+
+  WEEKDAYS.forEach((d) => {
+    const short = d.slice(0, 3).toLowerCase();
+    if (schedule.toLowerCase().includes(short)) {
+      const timeMatch = schedule.match(/\d{1,2}:\d{2}\s*(?:AM|PM)\s*[–-]\s*\d{1,2}:\d{2}\s*(?:AM|PM)/i);
+      slots[d] = timeMatch ? timeMatch[0] : '10:00 AM – 11:30 AM';
+    }
+  });
+
+  return slots;
+}
 
 interface AdminDashboardProps {
   activeTab?: string;
@@ -164,7 +257,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Student Filter & Search states
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
-  const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | 'active' | 'probation' | 'detained' | 'graduated'>('all');
+  const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | 'active' | 'probation' | 'repeat' | 'graduated'>('all');
   const [studentSemesterFilter, setStudentSemesterFilter] = useState<string>('all');
   const [studentDeptFilter, setStudentDeptFilter] = useState<string>('all');
 
@@ -245,12 +338,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Form states for Add / Edit Course
   const [formCode, setFormCode] = useState('');
   const [formTitle, setFormTitle] = useState('');
+  const [formType, setFormType] = useState<CourseType>('Theory');
   const [formSemesterId, setFormSemesterId] = useState(currentSemester.id);
   const [formSemesterNumber, setFormSemesterNumber] = useState(5);
   const [formCreditHours, setFormCreditHours] = useState(3);
   const [formDepartment, setFormDepartment] = useState(departments[0]?.name || 'Computer Science');
   const [formTeacherId, setFormTeacherId] = useState(teachers[0]?.id || '');
-  const [formSchedule, setFormSchedule] = useState('Mon & Wed · 10:00 AM – 11:30 AM');
+  const [formScheduleSlots, setFormScheduleSlots] = useState<Record<string, string>>({
+    Monday: '10:00 AM – 11:30 AM',
+    Wednesday: '10:00 AM – 11:30 AM',
+  });
+  const [scheduleValidationError, setScheduleValidationError] = useState<string | null>(null);
   const [formRoom, setFormRoom] = useState('Hall 402 · Computing Wing');
   const [formCapacity, setFormCapacity] = useState(40);
   const [formDescription, setFormDescription] = useState('');
@@ -410,6 +508,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setEditingCourse(null);
     setFormCode('');
     setFormTitle('');
+    setFormType('Theory');
     const defaultSem = sortedSemesters.find((s) => s.isCurrent) || sortedSemesters[0];
     setFormSemesterId(defaultSem ? defaultSem.id : currentSemester.id);
     setFormSemesterNumber(defaultSem ? defaultSem.number : currentSemester.number);
@@ -418,7 +517,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setFormDepartment(initialDept);
     const eligible = teachers.filter((t) => isTeacherInDept(t, initialDept));
     setFormTeacherId(eligible[0]?.id || '');
-    setFormSchedule('Mon & Wed · 10:00 AM – 11:30 AM');
+    setFormScheduleSlots({
+      Monday: '10:00 AM – 11:30 AM',
+      Wednesday: '10:00 AM – 11:30 AM',
+    });
+    setScheduleValidationError(null);
     setFormRoom('Hall 402 · Computing Wing');
     setFormCapacity(40);
     setFormDescription('');
@@ -429,6 +532,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setEditingCourse(course);
     setFormCode(course.code);
     setFormTitle(course.title);
+    const resolvedType: CourseType =
+      course.type || (course.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory');
+    setFormType(resolvedType);
     const matchedSem = sortedSemesters.find((s) => s.id === course.semesterId) ||
                        sortedSemesters.find((s) => s.number === course.semesterNumber) ||
                        sortedSemesters[0];
@@ -437,7 +543,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setFormCreditHours(course.creditHours);
     setFormDepartment(course.department);
     setFormTeacherId(course.teacherId);
-    setFormSchedule(course.schedule);
+    if (course.scheduleSlots && Object.keys(course.scheduleSlots).length > 0) {
+      setFormScheduleSlots(course.scheduleSlots);
+    } else {
+      setFormScheduleSlots(parseScheduleStringToSlots(course.schedule));
+    }
+    setScheduleValidationError(null);
     setFormRoom(course.room);
     setFormCapacity(course.maxCapacity);
     setFormDescription(course.description);
@@ -446,6 +557,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleSaveCourse = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate scheduled days based on Course Type
+    const selectedDays = Object.entries(formScheduleSlots).filter(([_, time]) => Boolean(time && time.trim()));
+    const selectedDaysCount = selectedDays.length;
+
+    if (formType === 'Theory') {
+      if (selectedDaysCount !== 2) {
+        setScheduleValidationError(
+          `Theory courses require exactly 2 scheduled days (currently selected: ${selectedDaysCount}). Please select time slots for exactly 2 days.`
+        );
+        return;
+      }
+    } else if (formType === 'Lab') {
+      if (selectedDaysCount !== 1) {
+        setScheduleValidationError(
+          `Lab courses require exactly 1 scheduled day (currently selected: ${selectedDaysCount}). Please select a time slot for exactly 1 day.`
+        );
+        return;
+      }
+    }
+
+    setScheduleValidationError(null);
+    const generatedSchedule = formatSlotsToSchedule(formScheduleSlots);
+
     const assignedTeacher = teachers.find((t) => t.id === formTeacherId);
     const teacherName = assignedTeacher ? assignedTeacher.name : 'Faculty Staff';
     const matchedSem = sortedSemesters.find((s) => s.id === formSemesterId);
@@ -455,13 +590,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       updateCourse(editingCourse.id, {
         code: formCode,
         title: formTitle,
+        type: formType,
         semesterId: formSemesterId,
         semesterNumber: semNumber,
         creditHours: Number(formCreditHours),
         department: formDepartment,
         teacherId: formTeacherId,
         teacherName,
-        schedule: formSchedule,
+        schedule: generatedSchedule,
+        scheduleSlots: formScheduleSlots,
         room: formRoom,
         maxCapacity: Number(formCapacity),
         description: formDescription,
@@ -470,13 +607,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       addCourse({
         code: formCode,
         title: formTitle,
+        type: formType,
         semesterId: formSemesterId,
         semesterNumber: semNumber,
         creditHours: Number(formCreditHours),
         department: formDepartment,
         teacherId: formTeacherId,
         teacherName,
-        schedule: formSchedule,
+        schedule: generatedSchedule,
+        scheduleSlots: formScheduleSlots,
         room: formRoom,
         maxCapacity: Number(formCapacity),
         description: formDescription,
@@ -578,11 +717,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         matchesDept = sDepts.includes(studentDeptFilter);
       }
 
+      // Check repeat status: academicStatus === 'repeat' or carrying any uncleared backlogs
+      const isRepeatStudent = Boolean(
+        (s.academicStatus && s.academicStatus.toLowerCase() === 'repeat') ||
+        (Array.isArray(s.backlogCourses) && s.backlogCourses.some((b) => b.status !== 'cleared')) ||
+        (Array.isArray((s as any).backlogs) && (s as any).backlogs.some((b: any) => b.status !== 'cleared'))
+      );
+
       // 2. Academic Status filter
       let matchesStatus = true;
       if (studentStatusFilter !== 'all') {
-        const curStatus = s.academicStatus || 'active';
-        matchesStatus = curStatus === studentStatusFilter;
+        if (studentStatusFilter === 'repeat') {
+          matchesStatus = isRepeatStudent;
+        } else if (studentStatusFilter === 'active') {
+          matchesStatus = (s.academicStatus?.toLowerCase() || 'active') === 'active' && !isRepeatStudent;
+        } else if (studentStatusFilter === 'probation') {
+          matchesStatus = s.academicStatus?.toLowerCase() === 'probation';
+        } else if (studentStatusFilter === 'graduated') {
+          matchesStatus = s.academicStatus?.toLowerCase() === 'graduated';
+        }
       }
 
       // 3. Semester filter
@@ -1174,31 +1327,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </td>
                           {/* Batch Promotion Column */}
                           <td className="py-2.5 px-4 text-center">
-                            {sem.isFinalResultsPublished ? (
-                              <div className="inline-flex flex-col items-center gap-1">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  <span>Results Published</span>
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setSemesterForPromotion(sem)}
-                                  className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold hover:underline cursor-pointer"
-                                >
-                                  View Promotion Report
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setSemesterForPromotion(sem)}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold text-white bg-slate-900 hover:bg-slate-800 hover:scale-[1.02] active:scale-95 transition-all shadow-2xs cursor-pointer whitespace-nowrap"
-                                title="Declare final examination results and trigger automated semester promotion batch"
-                              >
-                                <Sparkles className="w-3 h-3 text-indigo-400" />
-                                <span>Declare Results & Promote</span>
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => setSemesterForPromotion(sem)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold text-white bg-slate-900 hover:bg-slate-800 hover:scale-[1.02] active:scale-95 transition-all shadow-2xs cursor-pointer whitespace-nowrap"
+                              title="Declare final examination results and trigger automated semester promotion batch"
+                            >
+                              <Sparkles className="w-3 h-3 text-indigo-400" />
+                              <span>Declare Results & Promote</span>
+                            </button>
                           </td>
                           <td className="py-2.5 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
@@ -1394,8 +1531,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       const sem = sortedSemesters.find((s) => s.id === c.semesterId) || sortedSemesters.find((s) => s.number === c.semesterNumber);
                       return (
                         <tr key={c.id} className="hover:bg-indigo-50/30 transition-colors duration-150 group">
-                          <td className="py-3 px-4 font-bold text-slate-900 font-mono group-hover:text-indigo-600 transition-colors">
-                            {c.code}
+                          <td className="py-3 px-4 font-mono group-hover:text-indigo-600 transition-colors">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-bold text-slate-900">{c.code}</span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                                  (c.type || (c.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')) === 'Lab'
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                    : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                }`}
+                              >
+                                {c.type || (c.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')}
+                              </span>
+                            </div>
                           </td>
                           <td className="py-3 px-4">
                             <div className="font-semibold text-slate-900">{c.title}</div>
@@ -1807,10 +1955,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-md font-semibold text-slate-700 cursor-pointer focus:ring-1 focus:ring-indigo-500 shadow-2xs"
                 >
                   <option value="all">All Academic Statuses ({students.length})</option>
-                  <option value="active">Active ({students.filter((s) => (s.academicStatus || 'active') === 'active').length})</option>
-                  <option value="probation">Probation ({students.filter((s) => s.academicStatus === 'probation').length})</option>
-                  <option value="detained">Detained / Repeat ({students.filter((s) => s.academicStatus === 'detained' || s.academicStatus === 'repeat').length})</option>
-                  <option value="graduated">Graduated ({students.filter((s) => s.academicStatus === 'graduated').length})</option>
+                  <option value="active">Active ({students.filter((s) => (s.academicStatus?.toLowerCase() || 'active') === 'active' && !((s.academicStatus && s.academicStatus.toLowerCase() === 'repeat') || (Array.isArray(s.backlogCourses) && s.backlogCourses.some((b) => b.status !== 'cleared')) || (Array.isArray((s as any).backlogs) && (s as any).backlogs.some((b: any) => b.status !== 'cleared')))).length})</option>
+                  <option value="repeat">Repeat ({students.filter((s) => (s.academicStatus && s.academicStatus.toLowerCase() === 'repeat') || (Array.isArray(s.backlogCourses) && s.backlogCourses.some((b) => b.status !== 'cleared')) || (Array.isArray((s as any).backlogs) && (s as any).backlogs.some((b: any) => b.status !== 'cleared'))).length})</option>
+                  <option value="probation">Probation ({students.filter((s) => s.academicStatus?.toLowerCase() === 'probation').length})</option>
+                  <option value="graduated">Graduated ({students.filter((s) => s.academicStatus?.toLowerCase() === 'graduated').length})</option>
                 </select>
               </div>
 
@@ -1934,8 +2082,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 ) : (
                   filteredStudents.map((s) => {
                     const studentDept = getUserPrimaryDepartment(s);
-                    const isDetained = s.academicStatus === 'detained' || s.academicStatus === 'repeat';
-                    const isGraduated = s.academicStatus === 'graduated';
+                    const isRepeatStatus = (s.academicStatus && s.academicStatus.toLowerCase() === 'repeat') || Boolean(
+                      (Array.isArray(s.backlogCourses) && s.backlogCourses.some((b) => b.status !== 'cleared')) ||
+                      (Array.isArray((s as any).backlogs) && (s as any).backlogs.some((b: any) => b.status !== 'cleared'))
+                    );
+                    const isGraduated = s.academicStatus?.toLowerCase() === 'graduated';
+                    const isProbation = s.academicStatus?.toLowerCase() === 'probation';
                     const isFresh = s.admissionType !== 'transfer';
 
                     return (
@@ -1996,17 +2148,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                         {/* Academic Status Badge */}
                         <td className="py-3 px-2 text-center">
-                          {isDetained ? (
+                          {isRepeatStatus ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-rose-100 text-rose-800 border border-rose-300">
                               <AlertCircle className="w-2.5 h-2.5 text-rose-600 shrink-0" />
-                              <span>Detained</span>
+                              <span>Repeat</span>
                             </span>
                           ) : isGraduated ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-purple-100 text-purple-800 border border-purple-300">
                               <GraduationCap className="w-2.5 h-2.5 text-purple-600 shrink-0" />
                               <span>Graduated</span>
                             </span>
-                          ) : s.academicStatus === 'probation' ? (
+                          ) : isProbation ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300">
                               <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
                               <span>Probation</span>
@@ -2314,10 +2466,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
 
             <form onSubmit={handleSaveCourse} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Course Code (e.g. CS-301)
+                    Course Code (e.g. CS-301) <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -2331,7 +2483,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Credit Hours (1 - 5)
+                    Course Type <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={formType}
+                    onChange={(e) => {
+                      const nextType = e.target.value as CourseType;
+                      setFormType(nextType);
+                      setScheduleValidationError(null);
+                      if (nextType === 'Theory') {
+                        setFormCreditHours(3);
+                        // Ensure 2 days selected
+                        const activeEntries = Object.entries(formScheduleSlots).filter(([_, t]) => Boolean(t));
+                        if (activeEntries.length !== 2) {
+                          setFormScheduleSlots({
+                            Monday: '10:00 AM – 11:30 AM',
+                            Wednesday: '10:00 AM – 11:30 AM',
+                          });
+                        }
+                      } else {
+                        setFormCreditHours(1);
+                        // Ensure 1 day selected
+                        const activeEntries = Object.entries(formScheduleSlots).filter(([_, t]) => Boolean(t));
+                        if (activeEntries.length > 0) {
+                          setFormScheduleSlots({
+                            [activeEntries[0][0]]: activeEntries[0][1] || '01:00 PM – 04:00 PM (Afternoon Lab · 3 hrs)',
+                          });
+                        } else {
+                          setFormScheduleSlots({
+                            Friday: '01:00 PM – 04:00 PM (Afternoon Lab · 3 hrs)',
+                          });
+                        }
+                      }
+                    }}
+                    required
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 font-semibold text-slate-900 cursor-pointer"
+                  >
+                    <option value="Theory">Theory (3 Cr · 2 Days)</option>
+                    <option value="Lab">Lab (1 Cr · 1 Day)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Credit Hours (1 - 5) <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="number"
@@ -2483,28 +2678,195 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="sm:col-span-2">
+              {/* Class Schedule UI matching user design */}
+              <div className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/60 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-slate-200">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-bold text-slate-800">
+                        Class Schedule & Timings <span className="text-rose-500">*</span>
+                      </label>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          formType === 'Theory'
+                            ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                            : 'bg-amber-100 text-amber-800 border border-amber-200'
+                        }`}
+                      >
+                        {formType === 'Theory' ? 'Theory: Exactly 2 Days Required' : 'Lab: Exactly 1 Day Required'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {formType === 'Theory'
+                        ? 'Select time slots for exactly 2 days (e.g. Monday & Wednesday).'
+                        : 'Select a time slot for exactly 1 day (e.g. Friday).'}
+                    </p>
+                  </div>
+
+                  <div className="text-right">
+                    {(() => {
+                      const count = Object.entries(formScheduleSlots).filter(([_, time]) => Boolean(time && time.trim())).length;
+                      const isValid = (formType === 'Theory' && count === 2) || (formType === 'Lab' && count === 1);
+                      const isOver = count > (formType === 'Theory' ? 2 : 1);
+                      return (
+                        <span
+                          className={`text-[11px] font-semibold px-2 py-0.5 rounded-full inline-block ${
+                            isValid
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : isOver
+                              ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                              : 'bg-amber-100 text-amber-800 border border-amber-300'
+                          }`}
+                        >
+                          {count} of {formType === 'Theory' ? '2' : '1'} day{formType === 'Theory' ? 's' : ''} selected
+                        </span>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Table Header matching image: "Open Time" centered above right column */}
+                <div className="grid grid-cols-12 text-xs font-semibold text-slate-600 px-1 pt-1">
+                  <div className="col-span-4 sm:col-span-3 text-slate-700">Day</div>
+                  <div className="col-span-8 sm:col-span-9 text-center text-slate-600 font-medium tracking-wide">
+                    Open Time
+                  </div>
+                </div>
+
+                {/* Weekdays Rows matching user image */}
+                <div className="space-y-2">
+                  {WEEKDAYS.map((day) => {
+                    const isSelected = Boolean(formScheduleSlots[day]);
+                    const currentTime = formScheduleSlots[day] || '';
+
+                    return (
+                      <div
+                        key={day}
+                        className={`grid grid-cols-12 items-center gap-2 px-3 py-1.5 rounded-lg border transition-all ${
+                          isSelected
+                            ? 'bg-white border-indigo-300 shadow-2xs'
+                            : 'bg-white/70 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="col-span-4 sm:col-span-3 flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-indigo-600' : 'bg-slate-300'}`} />
+                          <span
+                            className={`text-xs ${
+                              isSelected ? 'font-bold text-slate-900' : 'font-medium text-slate-600'
+                            }`}
+                          >
+                            {day}
+                          </span>
+                        </div>
+
+                        <div className="col-span-8 sm:col-span-9 flex items-center gap-1.5">
+                          <select
+                            value={currentTime}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setScheduleValidationError(null);
+                              setFormScheduleSlots((prev) => {
+                                const copy = { ...prev };
+                                if (!val) {
+                                  delete copy[day];
+                                } else {
+                                  copy[day] = val;
+                                }
+                                return copy;
+                              });
+                            }}
+                            className={`w-full px-3 py-1.5 text-xs rounded-md border transition-all cursor-pointer ${
+                              currentTime
+                                ? 'bg-indigo-50/50 border-indigo-400 text-slate-900 font-medium'
+                                : 'bg-slate-50 border-slate-200 text-slate-400 font-normal'
+                            }`}
+                          >
+                            <option value="">Select time</option>
+                            <optgroup label="Standard Lecture Slots (1.5 hrs)">
+                              {STANDARD_TIME_SLOTS.map((slot) => (
+                                <option key={slot} value={slot}>
+                                  {slot}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Extended / Lab Slots (2 - 3 hrs)">
+                              {LAB_TIME_SLOTS.map((slot) => (
+                                <option key={slot} value={slot}>
+                                  {slot}
+                                </option>
+                              ))}
+                            </optgroup>
+                          </select>
+
+                          {isSelected && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setScheduleValidationError(null);
+                                setFormScheduleSlots((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[day];
+                                  return copy;
+                                });
+                              }}
+                              title={`Clear ${day} schedule`}
+                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded cursor-pointer shrink-0"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Validation Message or Error Banner */}
+                {scheduleValidationError && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="font-semibold">{scheduleValidationError}</div>
+                  </div>
+                )}
+
+                {/* Formatted Schedule Live Preview */}
+                <div className="p-2.5 bg-slate-100/90 rounded-md border border-slate-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div className="flex items-center gap-1.5 text-slate-600">
+                    <Clock className="w-3.5 h-3.5 text-slate-500" />
+                    <span className="font-semibold text-slate-700">Preview:</span>
+                    <span className="font-mono text-slate-900 font-medium">
+                      {formatSlotsToSchedule(formScheduleSlots) || 'No days scheduled yet'}
+                    </span>
+                  </div>
+
+                  <span className="text-[11px] text-slate-500">
+                    {formType === 'Theory' ? 'Requires 2 days' : 'Requires 1 day'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Class Schedule
+                    Lecture Venue / Hall / Lab Room <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
                     required
-                    value={formSchedule}
-                    onChange={(e) => setFormSchedule(e.target.value)}
+                    value={formRoom}
+                    onChange={(e) => setFormRoom(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md"
-                    placeholder="Mon & Wed · 10:00 AM – 11:30 AM"
+                    placeholder="Hall 402 · Computing Wing"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Max Capacity
+                    Max Student Capacity <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="number"
-                    min={10}
+                    min={5}
                     max={120}
                     required
                     value={formCapacity}
@@ -2512,20 +2874,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md font-mono"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Lecture Venue / Hall
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formRoom}
-                  onChange={(e) => setFormRoom(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md"
-                  placeholder="Hall 402 · Computing Wing"
-                />
               </div>
 
               <div>
@@ -2966,7 +3314,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           isOpen={Boolean(semesterForPromotion)}
           onClose={() => setSemesterForPromotion(null)}
           onSuccess={() => {
-            setDeleteToast(`Batch evaluation and semester progression engine executed for ${semesterForPromotion.name}.`);
+            setDeleteToast(`Final results declared and batch promotion successfully processed for ${semesterForPromotion.name}.`);
             setTimeout(() => setDeleteToast(null), 4000);
           }}
         />

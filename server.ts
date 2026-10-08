@@ -133,6 +133,8 @@ const CourseSchema = new mongooseLib.Schema(
     semesterNumber: { type: Number, required: true },
     semesterId: { type: String, required: true },
     creditHours: { type: Number, required: true, default: 3 },
+    type: { type: String, enum: ['Theory', 'Lab'], default: 'Theory' },
+    scheduleSlots: { type: Object, default: {} },
     department: { type: String, required: true },
     teacherId: { type: String, required: true },
     teacherName: { type: String, required: true },
@@ -165,6 +167,7 @@ const GradeSchema = new mongooseLib.Schema(
       assignment1: { type: Number, default: 0 },
       assignment2: { type: Number, default: 0 },
       assignment3: { type: Number, default: 0 },
+      attendanceMarks: { type: Number, default: 10 },
       mids: { type: Number, default: 0 },
       finalExam: { type: Number, default: 0 },
       total: { type: Number, default: 0 },
@@ -1329,8 +1332,31 @@ app.post('/api/admin/semesters/:id/publish-results-and-promote', async (req: Req
           const gradeRec = allGrades.find(
             (g) => g.courseId === course.id && g.studentId === student.id
           );
-          const marks = gradeRec?.marks;
-          const isFailed = marks ? (marks.letterGrade === 'F' || (marks.total !== undefined && marks.total < 50)) : false;
+          let marks = gradeRec?.marks;
+
+          // Standard Rubric Calculation:
+          // Final: max 40, Mids: max 30, Assignments 1 & 2: max 20 (10 each), Attendance: max 10 => Total 100
+          const a1 = Math.min(10, Math.max(0, Number(marks?.assignment1) || 0));
+          const a2 = Math.min(10, Math.max(0, Number(marks?.assignment2) || 0));
+          const mids = Math.min(30, Math.max(0, Number(marks?.mids) || 0));
+          const finals = Math.min(40, Math.max(0, Number(marks?.finalExam) || 0));
+          const att = Math.min(10, Math.max(0, Number(marks?.attendanceMarks !== undefined ? marks.attendanceMarks : 10)));
+          const totalMarks = Math.min(100, Math.max(0, Number((a1 + a2 + mids + finals + att).toFixed(1))));
+
+          let letterGrade = 'F';
+          let gradePoints = 0.0;
+          if (totalMarks >= 90) { letterGrade = 'A+'; gradePoints = 4.0; }
+          else if (totalMarks >= 85) { letterGrade = 'A'; gradePoints = 4.0; }
+          else if (totalMarks >= 80) { letterGrade = 'A-'; gradePoints = 3.7; }
+          else if (totalMarks >= 75) { letterGrade = 'B+'; gradePoints = 3.3; }
+          else if (totalMarks >= 70) { letterGrade = 'B'; gradePoints = 3.0; }
+          else if (totalMarks >= 65) { letterGrade = 'B-'; gradePoints = 2.7; }
+          else if (totalMarks >= 60) { letterGrade = 'C+'; gradePoints = 2.3; }
+          else if (totalMarks >= 55) { letterGrade = 'C'; gradePoints = 2.0; }
+          else if (totalMarks >= 50) { letterGrade = 'D'; gradePoints = 1.0; }
+          else { letterGrade = 'F'; gradePoints = 0.0; }
+
+          const isFailed = totalMarks < 50 || letterGrade === 'F';
 
           if (isFailed) {
             // Failed course: Tagged as failed backlog
@@ -1341,20 +1367,19 @@ app.post('/api/admin/semesters/:id/publish-results-and-promote', async (req: Req
               creditHours: cr,
               semesterOffered: semester.number,
               reason: 'failed',
-              grade: marks?.letterGrade || 'F',
+              grade: letterGrade,
               status: 'pending',
               detectedAt: new Date().toISOString().slice(0, 10),
             });
           } else {
             // Passed course: Grade points and credits are added
-            const gp = marks?.gradePoints !== undefined ? marks.gradePoints : 3.0;
             termEarnedCredits += cr;
-            termQualityPoints += gp * cr;
+            termQualityPoints += gradePoints * cr;
             passedCourses.push({
               courseId: course.id,
               courseCode: course.code,
               credits: cr,
-              grade: marks?.letterGrade || 'B',
+              grade: letterGrade,
             });
           }
         }
@@ -1384,59 +1409,64 @@ app.post('/api/admin/semesters/:id/publish-results-and-promote', async (req: Req
       const prevCredits = typeof student.creditsEarned === 'number' ? student.creditsEarned : (currentSem > 1 ? (currentSem - 1) * 16 : 0);
       const updatedCreditsEarned = prevCredits + termEarnedCredits;
 
-      const termGpa = termAttemptedCredits > 0
-        ? Number((termQualityPoints / termAttemptedCredits).toFixed(2))
-        : (student.cgpa || 3.0);
+      const hasUnclearedBacklogs = allActiveBacklogs.length > 0;
 
-      const effectiveGpa = student.cgpa
-        ? Number(((student.cgpa + termGpa) / 2).toFixed(2))
-        : termGpa;
-
-      // 2. Student Semester Progression (Standard Credit-Hour Progression)
       let nextSem = currentSem;
-      let decision: 'promoted' | 'promoted_probation' | 'graduated' | 'pending_graduation' = 'promoted';
-      let academicStatus: 'active' | 'probation' | 'graduated' = 'active';
+      let decision: 'promoted' | 'promoted_probation' | 'graduated' | 'pending_graduation' | 'repeat' = 'promoted';
+      let academicStatus: 'active' | 'probation' | 'graduated' | 'repeat' = 'active';
+      let effectiveGpa = student.cgpa || 3.0;
       let reasonStr = '';
 
-      if (currentSem < 8) {
-        // Sequential advance: current_semester += 1
-        nextSem = currentSem + 1;
-        if (effectiveGpa >= minGpa) {
-          academicStatus = 'active';
-          decision = 'promoted';
-          promotedCount++;
-          reasonStr = `Satisfactory academic progress (CGPA ${effectiveGpa} >= ${minGpa}, earned ${termEarnedCredits} Cr this term). Promoted to Semester ${nextSem}.`;
-        } else {
-          academicStatus = 'probation';
-          decision = 'promoted_probation';
-          probationCount++;
-          reasonStr = `Academic Probation advisory: CGPA ${effectiveGpa} < ${minGpa}. Promoted to Semester ${nextSem} under academic observation. Course retakes required.`;
+      if (hasUnclearedBacklogs) {
+        // Unattempted, Missed or Failed courses exist:
+        // Compute provisional term SGPA & cumulative CGPA using 0.00 grade points from missed/failed courses:
+        academicStatus = 'repeat';
+        decision = 'repeat';
+        carryingBacklogsCount++;
+        const termGpa = termAttemptedCredits > 0
+          ? Number((termQualityPoints / termAttemptedCredits).toFixed(2))
+          : 0.0;
+        const totalEvaluatedCr = prevCredits + termAttemptedCredits;
+        effectiveGpa = totalEvaluatedCr > 0
+          ? Number(((((student.cgpa || termGpa) * prevCredits) + termQualityPoints) / totalEvaluatedCr).toFixed(2))
+          : termGpa;
+        if (isNaN(effectiveGpa) || !isFinite(effectiveGpa)) {
+          effectiveGpa = student.cgpa || termGpa || 0.0;
         }
-
-        if (allActiveBacklogs.length > 0) {
-          reasonStr += ` Carrying ${allActiveBacklogs.length} repeat course(s): ${allActiveBacklogs.map((b: any) => b.courseCode).join(', ')}.`;
-        }
+        reasonStr = `Repeat Required: Student missed or failed ${allActiveBacklogs.length} course(s) (${allActiveBacklogs.map((b: any) => `${b.courseCode} [${b.reason === 'missed' ? 'Unenrolled' : 'Failed'}]`).join(', ')}). Provisional SGPA: ${termGpa}, Provisional CGPA: ${effectiveGpa}. Progression is held until repeat courses are cleared.`;
       } else {
-        // Final Term: Semester 8 graduation audit
-        nextSem = 8;
-        const zeroPendingBacklogs = allActiveBacklogs.length === 0;
-        const meetsGraduationCredits = updatedCreditsEarned >= 130 || termCurriculum.length === passedCourses.length;
+        // Enrolled in all courses and passed all:
+        // Calculate semester SGPA & cumulative CGPA
+        const termGpa = termAttemptedCredits > 0
+          ? Number((termQualityPoints / termAttemptedCredits).toFixed(2))
+          : (student.cgpa || 3.5);
 
-        if (zeroPendingBacklogs && meetsGraduationCredits) {
+        const totalEarnedCr = updatedCreditsEarned > 0 ? updatedCreditsEarned : termEarnedCredits;
+        effectiveGpa = student.cgpa
+          ? Number((((student.cgpa * prevCredits) + termQualityPoints) / totalEarnedCr).toFixed(2))
+          : termGpa;
+
+        if (currentSem < 8) {
+          nextSem = currentSem + 1;
+          if (effectiveGpa >= minGpa) {
+            academicStatus = 'active';
+            decision = 'promoted';
+            promotedCount++;
+            reasonStr = `Satisfactory academic progress (All ${termCurriculum.length} courses passed, SGPA ${termGpa}, CGPA ${effectiveGpa}). Promoted to Semester ${nextSem}.`;
+          } else {
+            academicStatus = 'probation';
+            decision = 'promoted_probation';
+            probationCount++;
+            reasonStr = `Academic Probation: All courses passed but CGPA ${effectiveGpa} < ${minGpa}. Promoted to Semester ${nextSem} under observation.`;
+          }
+        } else {
+          // Final term Semester 8
+          nextSem = 8;
           academicStatus = 'graduated';
           decision = 'graduated';
           graduatedCount++;
-          reasonStr = `Graduation requirements conferred: Completed final semester with CGPA ${effectiveGpa}, earned ${updatedCreditsEarned} credits, 0 pending backlogs.`;
-        } else {
-          academicStatus = effectiveGpa < minGpa ? 'probation' : 'active';
-          decision = 'pending_graduation';
-          pendingGraduationCount++;
-          reasonStr = `Graduation deferred: Coursework evaluated (CGPA ${effectiveGpa}), but ${allActiveBacklogs.length} backlog course(s) remain uncleared (${allActiveBacklogs.map((b: any) => b.courseCode).join(', ')}). Must clear repeat courses for degree conferral.`;
+          reasonStr = `Graduation requirements conferred: Completed all courses with CGPA ${effectiveGpa}, earned ${updatedCreditsEarned} credits, 0 pending backlogs.`;
         }
-      }
-
-      if (allActiveBacklogs.length > 0) {
-        carryingBacklogsCount++;
       }
 
       // Update student persistent record

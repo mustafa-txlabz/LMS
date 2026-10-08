@@ -33,6 +33,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     getCourseStudents,
     getCourseGradesMap,
     getStudentCourseGrade,
+    getStudentCourseAttendance,
     updateStudentGrade,
     lectures,
     markLectureAttendance,
@@ -272,9 +273,18 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-mono text-sm font-bold text-slate-900">
                   {selectedCourse.code}
+                </span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                    (selectedCourse.type || (selectedCourse.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')) === 'Lab'
+                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                      : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                  }`}
+                >
+                  {selectedCourse.type || (selectedCourse.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')}
                 </span>
                 <span className="text-slate-300">|</span>
                 <span className="text-sm font-semibold text-slate-800">
@@ -415,9 +425,20 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 >
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
-                        {crs.code}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-mono text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                          {crs.code}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                            (crs.type || (crs.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')) === 'Lab'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                          }`}
+                        >
+                          {crs.type || (crs.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')}
+                        </span>
+                      </div>
                       <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
                         {crs.creditHours} Credits
                       </span>
@@ -527,10 +548,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                     <th className="py-2.5 px-3">Student Name</th>
                     <th className="py-2.5 px-2 text-center w-20">A1 (10)</th>
                     <th className="py-2.5 px-2 text-center w-20">A2 (10)</th>
-                    <th className="py-2.5 px-2 text-center w-20">A3 (10)</th>
+                    <th className="py-2.5 px-2 text-center w-20">Att (10)</th>
                     <th className="py-2.5 px-2 text-center w-22">Mids (30)</th>
                     <th className="py-2.5 px-2 text-center w-22">Final (40)</th>
-                    <th className="py-2.5 px-3 text-center">Total</th>
+                    <th className="py-2.5 px-3 text-center">Total (100)</th>
                     <th className="py-2.5 px-3 text-center">Grade</th>
                     <th className="py-2.5 px-3 text-center">GPA</th>
                     <th className="py-2.5 px-3 text-right">Actions</th>
@@ -549,6 +570,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                         assignment1: 0,
                         assignment2: 0,
                         assignment3: 0,
+                        attendanceMarks: 10,
                         mids: 0,
                         finalExam: 0,
                         total: 0,
@@ -559,11 +581,18 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                       const pending = editingMarks[student.id] || {};
                       const a1 = pending.assignment1 !== undefined ? Number(pending.assignment1) : savedMarks.assignment1;
                       const a2 = pending.assignment2 !== undefined ? Number(pending.assignment2) : savedMarks.assignment2;
-                      const a3 = pending.assignment3 !== undefined ? Number(pending.assignment3) : savedMarks.assignment3;
+                      
+                      // Auto-calculate attendance default from recorded lecture logs if not explicitly overridden
+                      const attStats = selectedCourse ? getStudentCourseAttendance(selectedCourse.id, student.id) : { totalLectures: 0, percentage: 100 };
+                      const autoAttScore = attStats.totalLectures > 0 ? Number(((attStats.percentage / 100) * 10).toFixed(1)) : 10;
+                      const att = pending.attendanceMarks !== undefined
+                        ? Number(pending.attendanceMarks)
+                        : (savedMarks.attendanceMarks !== undefined ? savedMarks.attendanceMarks : autoAttScore);
+
                       const mids = pending.mids !== undefined ? Number(pending.mids) : savedMarks.mids;
                       const finals = pending.finalExam !== undefined ? Number(pending.finalExam) : savedMarks.finalExam;
 
-                      const calculated = calculateGradeDetails(a1, a2, a3, mids, finals);
+                      const calculated = calculateGradeDetails(a1, a2, att, mids, finals, att);
                       const hasPendingChanges = Object.keys(pending).length > 0;
 
                       return (
@@ -611,18 +640,19 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                             />
                           </td>
 
-                          {/* Assignment 3 (max 10) */}
+                          {/* Attendance Marks (max 10) */}
                           <td className="py-2 px-2 text-center">
                             <input
                               type="number"
                               min={0}
                               max={10}
                               step={0.5}
-                              value={a3}
+                              value={att}
                               onChange={(e) =>
-                                handleMarkChange(student.id, 'assignment3', parseFloat(e.target.value) || 0)
+                                handleMarkChange(student.id, 'attendanceMarks', parseFloat(e.target.value) || 0)
                               }
-                              className="w-16 px-1.5 py-1 text-center font-mono text-xs border border-slate-300 rounded bg-slate-50/80 focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                              title={`Attendance Score (10 max) · Attended: ${attStats.percentage}%`}
+                              className="w-16 px-1.5 py-1 text-center font-mono text-xs font-semibold text-emerald-800 border border-slate-300 rounded bg-emerald-50/50 focus:bg-white focus:ring-1 focus:ring-indigo-500"
                             />
                           </td>
 

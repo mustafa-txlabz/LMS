@@ -127,9 +127,12 @@ export function generateAcademicTranscriptPDF(
   // Course Grade Table
   const tableData = coursesWithMarks.map((row) => {
     const m = row.marks;
-    const assignTotal = m ? (m.assignment1 + m.assignment2 + m.assignment3).toFixed(1) : '-';
+    const a1 = m ? m.assignment1 : 0;
+    const a2 = m ? m.assignment2 : 0;
+    const assignTotal = m ? (a1 + a2).toFixed(1) : '-';
     const mids = m ? m.mids.toFixed(1) : '-';
     const final = m ? m.finalExam.toFixed(1) : '-';
+    const att = m ? (m.attendanceMarks !== undefined ? m.attendanceMarks.toFixed(1) : '10.0') : '-';
     const total = m ? `${m.total.toFixed(1)}%` : '-';
     const grade = m ? m.letterGrade : 'N/A';
     const gpa = m ? m.gradePoints.toFixed(2) : '-';
@@ -141,6 +144,7 @@ export function generateAcademicTranscriptPDF(
       assignTotal,
       mids,
       final,
+      att,
       total,
       grade,
       gpa,
@@ -154,9 +158,10 @@ export function generateAcademicTranscriptPDF(
         'Code',
         'Course Title',
         'Credits',
-        'Assign (30)',
+        'Assign (20)',
         'Mids (30)',
         'Final (40)',
+        'Att (10)',
         'Total',
         'Grade',
         'Points',
@@ -177,15 +182,16 @@ export function generateAcademicTranscriptPDF(
       cellPadding: 3,
     },
     columnStyles: {
-      0: { fontStyle: 'bold', halign: 'center', cellWidth: 20 },
-      1: { cellWidth: 62 },
-      2: { halign: 'center', cellWidth: 16 },
-      3: { halign: 'center', cellWidth: 20 },
-      4: { halign: 'center', cellWidth: 18 },
-      5: { halign: 'center', cellWidth: 18 },
-      6: { halign: 'center', fontStyle: 'bold', cellWidth: 16 },
-      7: { halign: 'center', fontStyle: 'bold', cellWidth: 15 },
-      8: { halign: 'center', cellWidth: 15 },
+      0: { fontStyle: 'bold', halign: 'center', cellWidth: 18 },
+      1: { cellWidth: 54 },
+      2: { halign: 'center', cellWidth: 14 },
+      3: { halign: 'center', cellWidth: 18 },
+      4: { halign: 'center', cellWidth: 16 },
+      5: { halign: 'center', cellWidth: 16 },
+      6: { halign: 'center', cellWidth: 14 },
+      7: { halign: 'center', fontStyle: 'bold', cellWidth: 14 },
+      8: { halign: 'center', fontStyle: 'bold', cellWidth: 14 },
+      9: { halign: 'center', cellWidth: 14 },
     },
     alternateRowStyles: {
       fillColor: [248, 250, 252],

@@ -78,7 +78,7 @@ export interface PromotionEvaluationResult {
   creditsAttempted: number;
   creditsPassed: number;
   passed: boolean;
-  decision: 'promoted' | 'promoted_probation' | 'graduated' | 'pending_graduation' | 'detained';
+  decision: 'promoted' | 'promoted_probation' | 'repeat' | 'graduated' | 'pending_graduation' | 'detained';
   academicStatus: AcademicStatus;
   backlogsCount: number;
   backlogs: BacklogCourse[];
@@ -90,6 +90,7 @@ export interface SemesterPromotionBatchSummary {
   totalEvaluated: number;
   promotedCount: number; // Promoted with active status (CGPA >= 2.0)
   probationCount: number; // Promoted with probation status (CGPA < 2.0)
+  repeatCount?: number; // Students in repeat standing
   carryingBacklogsCount: number; // Students carrying 1+ uncleared backlogs
   graduatedCount: number;
   pendingGraduationCount: number;
@@ -97,18 +98,22 @@ export interface SemesterPromotionBatchSummary {
   results: PromotionEvaluationResult[];
 }
 
+export type CourseType = 'Theory' | 'Lab';
+
 export interface Course {
   id: string;
   code: string; // e.g. "CS-301"
   title: string; // e.g. "Data Structures & Algorithms"
+  type?: CourseType; // 'Theory' | 'Lab'
   description: string;
   semesterNumber: number; // e.g. 5
   semesterId: string; // references Semester.id
-  creditHours: number; // e.g. 3 or 4
+  creditHours: number; // e.g. 3 for theory, 1 for lab
   department: string;
   teacherId: string; // Assigned teacher
   teacherName: string;
-  schedule: string; // e.g. "Mon & Wed 10:00 - 11:30 AM"
+  schedule: string; // e.g. "Mon & Wed · 10:00 AM – 11:30 AM"
+  scheduleSlots?: Record<string, string>; // e.g. { "Monday": "10:00 AM – 11:30 AM", "Wednesday": "10:00 AM – 11:30 AM" }
   room: string; // e.g. "Room 402, Tech Block"
   maxCapacity: number;
   enrolledCount: number;
@@ -127,10 +132,11 @@ export interface Enrollment {
 export interface StudentMarks {
   assignment1: number; // max 10
   assignment2: number; // max 10
-  assignment3: number; // max 10
-  mids: number; // max 30
-  finalExam: number; // max 40
-  total: number; // calculated 0-100
+  assignment3?: number; // legacy optional max 10
+  attendanceMarks?: number; // max 10 (Attendance weightage: 10 marks)
+  mids: number; // max 30 (Midterm exam: 30 marks)
+  finalExam: number; // max 40 (Final exam: 40 marks)
+  total: number; // calculated 0-100 (Final 40 + Mids 30 + Assignments 20 + Attendance 10 = 100)
   letterGrade: string; // 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' | 'F'
   gradePoints: number; // 4.0, 3.7, etc.
   feedback?: string;

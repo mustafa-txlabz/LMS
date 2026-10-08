@@ -15,6 +15,7 @@ import {
   Calendar,
   Download,
   AlertTriangle,
+  AlertCircle,
   Search,
   Check,
   Plus,
@@ -87,6 +88,73 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return (currentUser.backlogCourses || []).filter((b) => b.status !== 'cleared');
   }, [currentUser.backlogCourses]);
 
+  // Compute all relevant semesters for the logged-in student (from 1 up to current semester)
+  const currentSemNum = currentUser.semester || 1;
+  const allSemNumbers = React.useMemo(() => {
+    const studentCourseSemNumbers = enrolledCourses.map((c) => c.semesterNumber);
+    const backlogSemNumbers = (currentUser.backlogCourses || []).map((b) => b.semesterOffered);
+    return Array.from(
+      new Set([
+        ...Array.from({ length: currentSemNum }, (_, i) => i + 1),
+        ...studentCourseSemNumbers,
+        ...backlogSemNumbers,
+      ])
+    ).sort((a, b) => a - b);
+  }, [currentSemNum, enrolledCourses, currentUser.backlogCourses]);
+
+  // Overall Cumulative Academic Performance (CGPA & Credits)
+  // Computes actual numeric SGPA for each semester using 0.00 grade points from missed/failed courses,
+  // and aggregates into overall cumulative CGPA so it is never NaN or withheld.
+  const { cumulativeCgpa, totalEarnedCredits } = React.useMemo(() => {
+    let totalQualityPoints = 0;
+    let totalEvaluatedCredits = 0;
+    let earnedCreditsTotal = 0;
+
+    allSemNumbers.forEach((semNum) => {
+      const semCourses = enrolledCourses.filter((c) => c.semesterNumber === semNum);
+      const semBacklogs = (currentUser.backlogCourses || []).filter(
+        (b) => b.semesterOffered === semNum && b.status !== 'cleared'
+      );
+      const uncountedBacklogs = semBacklogs.filter(
+        (b) => !semCourses.some((c) => c.id === b.courseId || c.code === b.courseCode)
+      );
+
+      semCourses.forEach((c) => {
+        const m = getStudentCourseGrade(c.id, currentUser.id);
+        if (m && m.gradePoints !== undefined) {
+          totalQualityPoints += m.gradePoints * c.creditHours;
+          totalEvaluatedCredits += c.creditHours;
+          if (m.letterGrade !== 'F' && m.total >= 50) {
+            earnedCreditsTotal += c.creditHours;
+          }
+        }
+      });
+
+      // Missed / unenrolled backlog courses have 0.00 grade points
+      uncountedBacklogs.forEach((b) => {
+        const cr = b.creditHours || 3;
+        totalEvaluatedCredits += cr;
+      });
+    });
+
+    let cgpaVal = totalEvaluatedCredits > 0
+      ? totalQualityPoints / totalEvaluatedCredits
+      : (typeof currentUser.cgpa === 'number' ? currentUser.cgpa : 3.75);
+
+    if (isNaN(cgpaVal) || !isFinite(cgpaVal)) {
+      cgpaVal = typeof currentUser.cgpa === 'number' ? currentUser.cgpa : 3.75;
+    }
+
+    return {
+      cumulativeCgpa: Number(cgpaVal.toFixed(2)),
+      totalEarnedCredits: earnedCreditsTotal || currentUser.creditsEarned || overallStats.totalCredits,
+    };
+  }, [allSemNumbers, enrolledCourses, currentUser, getStudentCourseGrade, overallStats.totalCredits]);
+
+  const displayCgpa = (typeof cumulativeCgpa === 'number' && !isNaN(cumulativeCgpa) && isFinite(cumulativeCgpa))
+    ? cumulativeCgpa.toFixed(2)
+    : (currentUser.cgpa ? currentUser.cgpa.toFixed(2) : '3.75');
+
   // Filter available courses for registration
   const availableCourses = courses.filter((c) => {
     const matchesSem = selectedSemesterNumber === 0 || c.semesterNumber === selectedSemesterNumber;
@@ -130,7 +198,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     generateAcademicTranscriptPDF(currentUser, currentSemester.name, coursesWithMarks, {
       totalCredits: overallStats.totalCredits,
       semesterGpa: overallStats.calculatedSemesterGpa,
-      cgpa: currentUser.cgpa,
+      cgpa: Number(displayCgpa),
     });
   };
 
@@ -229,7 +297,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100 text-center hover:-translate-y-1 hover:shadow-md hover:border-indigo-300 transition-all duration-200 cursor-default group">
               <div className="text-[11px] text-slate-500 group-hover:text-slate-800 transition-colors">Cumulative GPA</div>
               <div className="text-base font-bold font-mono tabular-nums text-slate-900 mt-0.5 group-hover:text-slate-900 transition-colors">
-                {(currentUser.cgpa || 3.78).toFixed(2)}
+                {displayCgpa}
               </div>
             </div>
 
@@ -326,7 +394,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>Academic Advisory: Current Standing is Academic Probation</span>
                 <span className="font-mono text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-bold">
-                  CGPA: {(currentUser.cgpa || 1.85).toFixed(2)} &lt; 2.00 Cutoff
+                  CGPA: {displayCgpa} &lt; 2.00 Cutoff
                 </span>
               </div>
               <p className="text-amber-800 text-[11px] leading-relaxed">
@@ -549,9 +617,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono text-xs font-bold text-slate-900">
                             {course.code}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                              (course.type || (course.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')) === 'Lab'
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                            }`}
+                          >
+                            {course.type || (course.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')}
                           </span>
                           <span className="text-slate-300">·</span>
                           <span className="text-xs font-semibold text-slate-700">
@@ -665,9 +742,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   >
                     <div>
                       <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
-                          {c.code}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                            {c.code}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                              (c.type || (c.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')) === 'Lab'
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                            }`}
+                          >
+                            {c.type || (c.title.toLowerCase().includes('lab') ? 'Lab' : 'Theory')}
+                          </span>
+                        </div>
                         <span className="font-mono text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                           {c.creditHours} Credit Hours
                         </span>
@@ -851,145 +939,474 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       )}
 
       {/* Tab 4: Comprehensive Marks Breakdown & Official Academic Transcript */}
-      {currentTab === 'grades' && (
-        <div className="space-y-4 animate-fade-in-up">
-          <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">
-                Official Semester Marks & Evaluation Breakdown
-              </h3>
-              <p className="text-xs text-slate-500">
-                Continuous assessment (Assignments 1-3), Midterm Exam (Mids) and Final Semester Examinations.
-              </p>
+      {currentTab === 'grades' && (() => {
+        // Compute all relevant semesters for the logged-in student (from 1 up to current semester)
+        const currentSemNum = currentUser.semester || 1;
+        const studentCourseSemNumbers = Array.from(new Set(enrolledCourses.map((c) => c.semesterNumber)));
+        const backlogSemNumbers = (currentUser.backlogCourses || []).map((b) => b.semesterOffered);
+        const allSemNumbers = Array.from(
+          new Set([
+            ...Array.from({ length: currentSemNum }, (_, i) => i + 1),
+            ...studentCourseSemNumbers,
+            ...backlogSemNumbers,
+          ])
+        ).sort((a, b) => a - b);
+
+        const hasPendingRepeat = pendingBacklogs.length > 0 || (currentUser.academicStatus && currentUser.academicStatus.toLowerCase() === 'repeat');
+
+        return (
+          <div className="space-y-6 animate-fade-in-up">
+            {/* Header & Quick Action */}
+            <div className="p-4 bg-white rounded-lg border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <GraduationCap className="w-4 h-4 text-indigo-600" />
+                  <span>Official Academic Record & Examination Results</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Semester-wise curriculum evaluations, continuous assessments (Assignments 1-2), attendance, midterm, and final examinations.
+                </p>
+              </div>
+
+              <button
+                onClick={handleDownloadTranscriptPDF}
+                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md hover:scale-[1.02] active:scale-95 transition-all duration-150 shadow-xs flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Download Academic Transcript PDF</span>
+              </button>
             </div>
 
-            <button
-              onClick={handleDownloadTranscriptPDF}
-              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md hover:scale-[1.02] active:scale-95 transition-all duration-150 shadow-xs flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Download Academic Transcript PDF</span>
-            </button>
-          </div>
+            {/* Academic Standing & Overall Summary Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-3.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">Cumulative CGPA</span>
+                <div className="flex items-baseline gap-1 mt-1">
+                  <span className="text-2xl font-bold font-mono text-indigo-700">
+                    {displayCgpa}
+                  </span>
+                  <span className="text-xs text-slate-400">/ 4.00</span>
+                </div>
+              </div>
 
-          {/* Marks Breakdown Table */}
-          <div className="bg-white rounded-lg border border-slate-200 shadow-2xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
-                    <th className="py-2.5 px-3">Course Code</th>
-                    <th className="py-2.5 px-3">Course Title</th>
-                    <th className="py-2.5 px-2 text-center">Credits</th>
-                    <th className="py-2.5 px-2 text-center">A1 (10)</th>
-                    <th className="py-2.5 px-2 text-center">A2 (10)</th>
-                    <th className="py-2.5 px-2 text-center">A3 (10)</th>
-                    <th className="py-2.5 px-2 text-center">Mids (30)</th>
-                    <th className="py-2.5 px-2 text-center">Final (40)</th>
-                    <th className="py-2.5 px-3 text-center">Total</th>
-                    <th className="py-2.5 px-3 text-center">Grade</th>
-                    <th className="py-2.5 px-3 text-center">GPA</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-sans">
-                  {enrolledCourses.map((c) => {
-                    const m = getStudentCourseGrade(c.id, currentUser.id);
+              <div className="p-3.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">Earned Credits</span>
+                <div className="flex items-baseline gap-1 mt-1">
+                  <span className="text-2xl font-bold font-mono text-slate-900">
+                    {totalEarnedCredits}
+                  </span>
+                  <span className="text-xs text-slate-400">Cr Total</span>
+                </div>
+              </div>
 
-                    return (
-                      <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 px-3 font-mono font-bold text-slate-900">
-                          {c.code}
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-semibold text-slate-900">{c.title}</div>
-                          <div className="text-[11px] text-slate-400">
-                            Instructor: {c.teacherName}
+              <div className="p-3.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">Current Semester</span>
+                <div className="flex items-baseline gap-1 mt-1">
+                  <span className="text-2xl font-bold font-mono text-slate-900">
+                    Sem {currentUser.semester || 1}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">Academic Standing</span>
+                <div className="mt-1.5">
+                  {hasPendingRepeat ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-rose-100 text-rose-800 border border-rose-300">
+                      <AlertCircle className="w-3 h-3 text-rose-600" />
+                      <span>Repeat Required</span>
+                    </span>
+                  ) : currentUser.academicStatus === 'probation' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                      <AlertTriangle className="w-3 h-3 text-amber-600" />
+                      <span>Probation</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      <span>Good Standing</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Repeat / Backlog Advisory Warning Banner */}
+            {hasPendingRepeat && (
+              <div className="p-4 bg-rose-50 border border-rose-300 rounded-lg flex items-start gap-3 text-xs text-rose-900 animate-in fade-in">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="font-bold text-rose-950 block text-sm">
+                    Pending Repeat Course Warning ({pendingBacklogs.length} course(s))
+                  </strong>
+                  <p className="mt-1 text-rose-800 leading-relaxed">
+                    Under university academic regulations, you have missed or failed {pendingBacklogs.length} curriculum course(s):{' '}
+                    <span className="font-mono font-bold text-rose-900">
+                      {pendingBacklogs.map((b) => `${b.courseCode} (${b.reason === 'missed' ? 'Unenrolled' : 'Failed'})`).join(', ')}
+                    </span>
+                    . In accordance with university academic policy, semester SGPA is evaluated provisionally (accounting for 0.00 grade points) until repeat courses are cleared.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Semester-by-Semester Tables */}
+            <div className="space-y-6">
+              {allSemNumbers.map((semNum) => {
+                const semMeta = semesters.find((s) => s.number === semNum);
+                const semName = semMeta?.name || `Semester ${semNum}`;
+                const isCurrentSem = semNum === currentSemNum;
+
+                // Courses for this semester
+                const semCourses = enrolledCourses.filter((c) => c.semesterNumber === semNum);
+
+                // Backlog/repeat courses for this semester
+                const semBacklogs = (currentUser.backlogCourses || []).filter(
+                  (b) => b.semesterOffered === semNum && b.status !== 'cleared'
+                );
+
+                // Backlogs from this semester not already present in semCourses (e.g. missed/unenrolled)
+                const uncountedBacklogs = semBacklogs.filter(
+                  (b) => !semCourses.some((c) => c.id === b.courseId || c.code === b.courseCode)
+                );
+
+                const hasFailedInEnrolled = semCourses.some((c) => {
+                  const m = getStudentCourseGrade(c.id, currentUser.id);
+                  return m && (m.letterGrade === 'F' || m.total < 50);
+                });
+
+                const hasRepeatInThisSem = semBacklogs.length > 0 || hasFailedInEnrolled;
+
+                // Total Enrolled / Curriculum Credits for this Semester (Formula denominator)
+                const totalSemRegisteredCredits =
+                  semCourses.reduce((sum, c) => sum + c.creditHours, 0) +
+                  uncountedBacklogs.reduce((sum, b) => sum + (b.creditHours || 3), 0);
+
+                let totalQualityPoints = 0;
+                let earnedSemCredits = 0;
+                let gradedCredits = 0;
+
+                semCourses.forEach((c) => {
+                  const m = getStudentCourseGrade(c.id, currentUser.id);
+                  if (m && m.gradePoints !== undefined) {
+                    totalQualityPoints += m.gradePoints * c.creditHours;
+                    gradedCredits += c.creditHours;
+                    if (m.letterGrade !== 'F' && m.total >= 50) {
+                      earnedSemCredits += c.creditHours;
+                    }
+                  } else {
+                    gradedCredits += c.creditHours;
+                  }
+                });
+
+                // Unenrolled/missed courses contribute 0.00 grade points
+                uncountedBacklogs.forEach((b) => {
+                  const cr = b.creditHours || 3;
+                  gradedCredits += cr;
+                  // 0.00 grade points contributes 0 to totalQualityPoints
+                });
+
+                // Compute actual numeric SGPA using 0.00 grade points from missed/failed courses:
+                // Formula: Sum(Course Grade Points * Course Credits) / Total Enrolled Credits
+                const numericSemSgpa = gradedCredits > 0
+                  ? totalQualityPoints / gradedCredits
+                  : 0;
+
+                const semSgpa = gradedCredits > 0 ? numericSemSgpa.toFixed(2) : '-';
+
+                return (
+                  <div
+                    key={`semester-section-${semNum}`}
+                    className={`bg-white rounded-lg border shadow-2xs overflow-hidden transition-all ${
+                      hasRepeatInThisSem
+                        ? 'border-rose-300 ring-1 ring-rose-200'
+                        : isCurrentSem
+                        ? 'border-indigo-300 ring-1 ring-indigo-100'
+                        : 'border-slate-200'
+                    }`}
+                  >
+                    {/* Semester Header */}
+                    <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-9 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-sm ${
+                            hasRepeatInThisSem
+                              ? 'bg-rose-100 text-rose-800'
+                              : isCurrentSem
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'bg-slate-200 text-slate-800'
+                          }`}
+                        >
+                          {semNum}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-base font-bold text-slate-900">
+                              Semester {semNum}
+                            </h4>
+                            <span className="text-xs text-slate-500 font-medium">· {semName}</span>
+                            {isCurrentSem && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-indigo-100 text-indigo-700 border border-indigo-200">
+                                Current Term
+                              </span>
+                            )}
                           </div>
-                          {m?.feedback && (
-                            <div className="text-[11px] text-slate-600 italic mt-0.5">
-                              &ldquo;{m.feedback}&rdquo;
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3 px-2 text-center font-mono text-slate-700">
-                          {c.creditHours} Cr
-                        </td>
-                        <td className="py-3 px-2 text-center font-mono tabular-nums text-slate-700">
-                          {m ? m.assignment1.toFixed(1) : '-'}
-                        </td>
-                        <td className="py-3 px-2 text-center font-mono tabular-nums text-slate-700">
-                          {m ? m.assignment2.toFixed(1) : '-'}
-                        </td>
-                        <td className="py-3 px-2 text-center font-mono tabular-nums text-slate-700">
-                          {m ? m.assignment3.toFixed(1) : '-'}
-                        </td>
-                        <td className="py-3 px-2 text-center font-mono tabular-nums font-semibold text-slate-800">
-                          {m ? m.mids.toFixed(1) : '-'}
-                        </td>
-                        <td className="py-3 px-2 text-center font-mono tabular-nums font-semibold text-slate-800">
-                          {m ? m.finalExam.toFixed(1) : '-'}
-                        </td>
-                        <td className="py-3 px-3 text-center font-mono tabular-nums font-bold text-slate-900">
-                          {m ? `${m.total.toFixed(1)}%` : 'Pending'}
-                        </td>
-                        <td className="py-3 px-3 text-center font-mono font-bold">
-                          {m ? (
-                            <span
-                              className={`px-2 py-0.5 rounded text-[11px] ${
-                                m.letterGrade.startsWith('A')
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : m.letterGrade.startsWith('B')
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : m.letterGrade.startsWith('C')
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-rose-100 text-rose-800'
-                              }`}
-                            >
-                              {m.letterGrade}
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {hasRepeatInThisSem ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700">
+                                <AlertCircle className="w-3 h-3 text-rose-600" />
+                                <span>Incomplete / Repeat Course Required</span>
+                              </span>
+                            ) : isCurrentSem ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600">
+                                <Clock className="w-3 h-3 text-indigo-500" />
+                                <span>Continuous Assessment in Progress</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>Completed & Evaluated</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Semester Summary Badges */}
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <div className="px-3 py-1 bg-white border border-slate-200 rounded-md text-xs shadow-2xs">
+                          <span className="text-slate-400 mr-1.5">Registered:</span>
+                          <strong className="font-mono text-slate-900">{totalSemRegisteredCredits} Cr</strong>
+                        </div>
+
+                        <div className="px-3 py-1 bg-white border border-slate-200 rounded-md text-xs shadow-2xs">
+                          <span className="text-slate-400 mr-1.5">Earned:</span>
+                          <strong className="font-mono text-emerald-700">{earnedSemCredits} Cr</strong>
+                        </div>
+
+                        <div
+                          className={`px-3 py-1 rounded-md text-xs font-mono font-bold border shadow-2xs ${
+                            hasRepeatInThisSem
+                              ? 'bg-rose-50 border-rose-300 text-rose-800'
+                              : 'bg-indigo-50 border-indigo-200 text-indigo-800'
+                          }`}
+                        >
+                          <span className="text-slate-500 mr-1">SGPA:</span>
+                          <span className={hasRepeatInThisSem ? 'text-rose-800 font-bold' : 'text-indigo-900 font-bold'}>
+                            {semSgpa}
+                          </span>
+                          {hasRepeatInThisSem && (
+                            <span className="ml-1 text-[10px] text-rose-600 font-sans font-normal">
+                              (Provisional)
                             </span>
-                          ) : (
-                            'N/A'
                           )}
-                        </td>
-                        <td className="py-3 px-3 text-center font-mono tabular-nums font-bold text-slate-800">
-                          {m ? m.gradePoints.toFixed(2) : '-'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                        </div>
+                      </div>
+                    </div>
 
-            {/* GPA Summary Footer */}
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-4">
-                <div>
-                  <span className="text-slate-500">Total Registered Credits:</span>{' '}
-                  <strong className="font-mono text-slate-900">{overallStats.totalCredits} Cr</strong>
-                </div>
-                <div>
-                  <span className="text-slate-500">Cumulative Earned Credits:</span>{' '}
-                  <strong className="font-mono text-slate-900">{currentUser.creditsEarned || 68} Cr</strong>
-                </div>
-              </div>
+                    {/* Courses Table for this Semester */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100/70 border-b border-slate-200 text-slate-600 font-semibold">
+                            <th className="py-2.5 px-3">Course Code</th>
+                            <th className="py-2.5 px-3">Course Title</th>
+                            <th className="py-2.5 px-2 text-center">Credits</th>
+                            <th className="py-2.5 px-2 text-center" title="Assignment 1 (Max 10)">A1 (10)</th>
+                            <th className="py-2.5 px-2 text-center" title="Assignment 2 (Max 10)">A2 (10)</th>
+                            <th className="py-2.5 px-2 text-center" title="Midterm Examination (Max 30)">Mids (30)</th>
+                            <th className="py-2.5 px-2 text-center" title="Attendance Evaluation (Max 10)">Att (10)</th>
+                            <th className="py-2.5 px-2 text-center" title="Final Semester Examination (Max 40)">Final (40)</th>
+                            <th className="py-2.5 px-3 text-center" title="Total Marks Out of 100">Total (100)</th>
+                            <th className="py-2.5 px-3 text-center">Grade</th>
+                            <th className="py-2.5 px-3 text-center">GPA</th>
+                            <th className="py-2.5 px-3 text-center">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-sans">
+                          {semCourses.length === 0 && semBacklogs.length === 0 ? (
+                            <tr>
+                              <td colSpan={12} className="py-6 text-center text-slate-400">
+                                No course registrations recorded for Semester {semNum}.
+                              </td>
+                            </tr>
+                          ) : (
+                            <>
+                              {/* Regular Enrolled Courses */}
+                              {semCourses.map((c) => {
+                                const m = getStudentCourseGrade(c.id, currentUser.id);
+                                const isPassed = m ? m.letterGrade !== 'F' && m.total >= 50 : false;
+                                const isFailed = m ? m.letterGrade === 'F' || m.total < 50 : false;
 
-              <div className="flex items-center gap-4">
-                <div>
-                  <span className="text-slate-500">Semester SGPA:</span>{' '}
-                  <strong className="font-mono text-base text-indigo-700">
-                    {overallStats.calculatedSemesterGpa.toFixed(2)}
-                  </strong>
-                </div>
-                <div>
-                  <span className="text-slate-500">Overall CGPA:</span>{' '}
-                  <strong className="font-mono text-base text-slate-900">
-                    {(currentUser.cgpa || 3.78).toFixed(2)}
-                  </strong>
-                </div>
-              </div>
+                                return (
+                                  <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
+                                    <td className="py-3 px-3 font-mono font-bold text-slate-900">
+                                      {c.code}
+                                    </td>
+                                    <td className="py-3 px-3">
+                                      <div className="font-semibold text-slate-900">{c.title}</div>
+                                      <div className="text-[11px] text-slate-400">
+                                        Instructor: {c.teacherName}
+                                      </div>
+                                      {m?.feedback && (
+                                        <div className="text-[11px] text-slate-600 italic mt-0.5">
+                                          &ldquo;{m.feedback}&rdquo;
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-mono text-slate-700">
+                                      {c.creditHours} Cr
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-mono tabular-nums text-slate-700">
+                                      {m ? m.assignment1.toFixed(1) : '-'}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-mono tabular-nums text-slate-700">
+                                      {m ? m.assignment2.toFixed(1) : '-'}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-mono tabular-nums font-semibold text-slate-800">
+                                      {m ? m.mids.toFixed(1) : '-'}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-mono tabular-nums text-slate-700">
+                                      {m ? (m.attendanceMarks !== undefined ? m.attendanceMarks.toFixed(1) : '10.0') : '-'}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-mono tabular-nums font-semibold text-slate-800">
+                                      {m ? m.finalExam.toFixed(1) : '-'}
+                                    </td>
+                                    <td className="py-3 px-3 text-center font-mono tabular-nums font-bold text-slate-900">
+                                      {m ? `${m.total.toFixed(1)}%` : 'In Progress'}
+                                    </td>
+                                    <td className="py-3 px-3 text-center font-mono font-bold">
+                                      {m ? (
+                                        <span
+                                          className={`px-2 py-0.5 rounded text-[11px] ${
+                                            m.letterGrade.startsWith('A')
+                                              ? 'bg-emerald-100 text-emerald-800'
+                                              : m.letterGrade.startsWith('B')
+                                              ? 'bg-blue-100 text-blue-800'
+                                              : m.letterGrade.startsWith('C')
+                                              ? 'bg-amber-100 text-amber-800'
+                                              : 'bg-rose-100 text-rose-800'
+                                          }`}
+                                        >
+                                          {m.letterGrade}
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-400">N/A</span>
+                                      )}
+                                    </td>
+                                    <td className="py-3 px-3 text-center font-mono tabular-nums font-bold text-slate-800">
+                                      {m ? m.gradePoints.toFixed(2) : '-'}
+                                    </td>
+                                    <td className="py-3 px-3 text-center">
+                                      {isFailed ? (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-rose-100 text-rose-800 border border-rose-300">
+                                          Failed (Repeat)
+                                        </span>
+                                      ) : isPassed ? (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                          Passed
+                                        </span>
+                                      ) : (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-700 border border-slate-200">
+                                          In Progress
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+
+                              {/* Backlog / Repeat Courses for this semester (Missed or Failed) */}
+                              {semBacklogs.map((b) => (
+                                <tr
+                                  key={`backlog-${b.courseId || b.courseCode}`}
+                                  className="bg-rose-50/70 hover:bg-rose-50 border-t border-rose-200 text-rose-900 transition-colors"
+                                >
+                                  <td className="py-3 px-3 font-mono font-bold text-rose-800">
+                                    {b.courseCode}
+                                  </td>
+                                  <td className="py-3 px-3">
+                                    <div className="font-semibold text-rose-900 flex items-center gap-1.5">
+                                      <span>{b.courseTitle || b.courseCode}</span>
+                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-rose-200 text-rose-800">
+                                        Repeat Course
+                                      </span>
+                                    </div>
+                                    <div className="text-[11px] text-rose-700">
+                                      {b.reason === 'missed'
+                                        ? 'Offered in curriculum but student was unenrolled'
+                                        : 'Course failed in previous examination'}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-2 text-center font-mono text-rose-800">
+                                    {b.creditHours || 3} Cr
+                                  </td>
+                                  <td className="py-3 px-2 text-center font-mono text-rose-400">-</td>
+                                  <td className="py-3 px-2 text-center font-mono text-rose-400">-</td>
+                                  <td className="py-3 px-2 text-center font-mono text-rose-400">-</td>
+                                  <td className="py-3 px-2 text-center font-mono text-rose-400">-</td>
+                                  <td className="py-3 px-2 text-center font-mono text-rose-400">-</td>
+                                  <td className="py-3 px-3 text-center font-mono font-bold text-rose-800">
+                                    0.0%
+                                  </td>
+                                  <td className="py-3 px-3 text-center font-mono font-bold">
+                                    <span className="px-2 py-0.5 rounded text-[11px] bg-rose-200 text-rose-900 border border-rose-300 font-bold">
+                                      F
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 text-center font-mono font-bold text-rose-800">
+                                    0.00
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-rose-600 text-white shadow-2xs">
+                                      Must Repeat
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Semester Summary Footer */}
+                    <div className="p-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-3 text-slate-500">
+                        <span>
+                          Enrolled: <strong className="text-slate-800">{semCourses.length}</strong>
+                        </span>
+                        {semBacklogs.length > 0 && (
+                          <span className="text-rose-700 font-bold">
+                            · Backlogs: {semBacklogs.length}
+                          </span>
+                        )}
+                        <span>
+                          · Total Credits: <strong className="text-slate-800">{totalSemRegisteredCredits} Cr</strong>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-slate-500">Semester SGPA:</span>
+                        <strong
+                          className={`font-mono text-sm ${
+                            hasRepeatInThisSem ? 'text-rose-700' : 'text-indigo-700'
+                          }`}
+                        >
+                          {semSgpa}
+                        </strong>
+                        {hasRepeatInThisSem && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs">
+                            <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                            <span>(Provisional - Backlog Pending)</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </div>
 
           {/* Automated Notification & Lecture Reminders History for Student */}
           <div className="p-5 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-3">
@@ -1029,7 +1446,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
           </div>
         </div>
-      )}
+      ); })()}
     </div>
   );
 };

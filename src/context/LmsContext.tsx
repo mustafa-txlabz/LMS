@@ -158,11 +158,27 @@ const STORAGE_KEY_PREFIX = 'unicore_lms_v2_';
 export function calculateGradeDetails(
   a1: number = 0,
   a2: number = 0,
-  a3: number = 0,
+  a3OrAtt: number = 0,
   mids: number = 0,
-  finals: number = 0
-): { total: number; letterGrade: string; gradePoints: number } {
-  const total = Math.min(100, Math.max(0, Number((a1 + a2 + a3 + mids + finals).toFixed(1))));
+  finals: number = 0,
+  attendanceScore: number = 10
+): { total: number; letterGrade: string; gradePoints: number; attendanceMarks: number } {
+  // Support either 5-param legacy (a1, a2, a3, mids, finals) or 6-param / structured:
+  // User rubric:
+  // Final exam: total 40 marks
+  // Mid exam: total 30 marks
+  // Both assignments: 20 marks (10 marks each)
+  // Attendance: 10 marks
+  // Total = 100 marks
+  const assign1 = Math.min(10, Math.max(0, Number(a1) || 0));
+  const assign2 = Math.min(10, Math.max(0, Number(a2) || 0));
+  const midExam = Math.min(30, Math.max(0, Number(mids) || 0));
+  const finalMarks = Math.min(40, Math.max(0, Number(finals) || 0));
+  
+  // Attendance marks: max 10
+  const attMarks = Math.min(10, Math.max(0, Number(attendanceScore !== undefined ? attendanceScore : (a3OrAtt || 10))));
+
+  const total = Math.min(100, Math.max(0, Number((assign1 + assign2 + midExam + finalMarks + attMarks).toFixed(1))));
 
   let letterGrade = 'F';
   let gradePoints = 0.0;
@@ -199,7 +215,7 @@ export function calculateGradeDetails(
     gradePoints = 0.0;
   }
 
-  return { total, letterGrade, gradePoints };
+  return { total, letterGrade, gradePoints, attendanceMarks: attMarks };
 }
 
 export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -936,8 +952,31 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
           } else {
             const gradeRec = grades.find((g) => g.courseId === course.id && g.studentId === u.id);
-            const marks = gradeRec?.marks;
-            const isFailed = marks ? (marks.letterGrade === 'F' || (marks.total !== undefined && marks.total < 50)) : false;
+            const m = gradeRec?.marks;
+
+            // Standard Rubric Calculation:
+            // Final: max 40, Mids: max 30, Assignments 1 & 2: max 20 (10 each), Attendance: max 10 => Total 100
+            const a1 = Math.min(10, Math.max(0, Number(m?.assignment1) || 0));
+            const a2 = Math.min(10, Math.max(0, Number(m?.assignment2) || 0));
+            const mids = Math.min(30, Math.max(0, Number(m?.mids) || 0));
+            const finals = Math.min(40, Math.max(0, Number(m?.finalExam) || 0));
+            const att = Math.min(10, Math.max(0, Number(m?.attendanceMarks !== undefined ? m.attendanceMarks : 10)));
+            const totalMarks = Math.min(100, Math.max(0, Number((a1 + a2 + mids + finals + att).toFixed(1))));
+
+            let letterGrade = 'F';
+            let gradePoints = 0.0;
+            if (totalMarks >= 90) { letterGrade = 'A+'; gradePoints = 4.0; }
+            else if (totalMarks >= 85) { letterGrade = 'A'; gradePoints = 4.0; }
+            else if (totalMarks >= 80) { letterGrade = 'A-'; gradePoints = 3.7; }
+            else if (totalMarks >= 75) { letterGrade = 'B+'; gradePoints = 3.3; }
+            else if (totalMarks >= 70) { letterGrade = 'B'; gradePoints = 3.0; }
+            else if (totalMarks >= 65) { letterGrade = 'B-'; gradePoints = 2.7; }
+            else if (totalMarks >= 60) { letterGrade = 'C+'; gradePoints = 2.3; }
+            else if (totalMarks >= 55) { letterGrade = 'C'; gradePoints = 2.0; }
+            else if (totalMarks >= 50) { letterGrade = 'D'; gradePoints = 1.0; }
+            else { letterGrade = 'F'; gradePoints = 0.0; }
+
+            const isFailed = totalMarks < 50 || letterGrade === 'F';
 
             if (isFailed) {
               termBacklogs.push({
@@ -947,19 +986,18 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 creditHours: cr,
                 semesterOffered: sem.number,
                 reason: 'failed' as const,
-                grade: marks?.letterGrade || 'F',
+                grade: letterGrade,
                 status: 'pending' as const,
                 detectedAt: new Date().toISOString().slice(0, 10),
               });
             } else {
-              const gp = marks?.gradePoints !== undefined ? marks.gradePoints : 3.0;
               termEarnedCredits += cr;
-              termQualityPoints += gp * cr;
+              termQualityPoints += gradePoints * cr;
               passedCourses.push({
                 courseId: course.id,
                 courseCode: course.code,
                 credits: cr,
-                grade: marks?.letterGrade || 'B',
+                grade: letterGrade,
               });
             }
           }
@@ -981,51 +1019,54 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const prevCredits = typeof u.creditsEarned === 'number' ? u.creditsEarned : (currentSem > 1 ? (currentSem - 1) * 16 : 0);
         const updatedCreditsEarned = prevCredits + termEarnedCredits;
 
-        const termGpa = termAttemptedCredits > 0
-          ? Number((termQualityPoints / termAttemptedCredits).toFixed(2))
-          : (u.cgpa || 3.0);
-        const effectiveGpa = u.cgpa ? Number(((u.cgpa + termGpa) / 2).toFixed(2)) : termGpa;
+        const hasUnclearedBacklogs = allActiveBacklogs.length > 0;
 
         let nextSem = currentSem;
-        let decision: 'promoted' | 'promoted_probation' | 'graduated' | 'pending_graduation' = 'promoted';
-        let academicStatus: 'active' | 'probation' | 'graduated' = 'active';
+        let decision: 'promoted' | 'promoted_probation' | 'graduated' | 'pending_graduation' | 'repeat' = 'promoted';
+        let academicStatus: 'active' | 'probation' | 'graduated' | 'repeat' = 'active';
+        let effectiveGpa = u.cgpa || 3.0;
         let reasonStr = '';
 
-        if (currentSem < 8) {
-          nextSem = currentSem + 1;
-          if (effectiveGpa >= minGpa) {
-            academicStatus = 'active';
-            decision = 'promoted';
-            promotedCount++;
-            reasonStr = `Satisfactory academic progress (CGPA ${effectiveGpa} >= ${minGpa}, earned ${termEarnedCredits} Cr). Promoted to Semester ${nextSem}.`;
-          } else {
-            academicStatus = 'probation';
-            decision = 'promoted_probation';
-            probationCount++;
-            reasonStr = `Academic Probation advisory: CGPA ${effectiveGpa} < ${minGpa}. Promoted to Semester ${nextSem} under observation. Course retakes required.`;
-          }
-          if (allActiveBacklogs.length > 0) {
-            reasonStr += ` Carrying ${allActiveBacklogs.length} repeat course(s): ${allActiveBacklogs.map((b) => b.courseCode).join(', ')}.`;
-          }
+        if (hasUnclearedBacklogs) {
+          // Unenrolled or failed courses exist:
+          // In accordance with academic policy, final GPA is withheld until repeat course is cleared.
+          academicStatus = 'repeat';
+          decision = 'repeat';
+          carryingBacklogsCount++;
+          reasonStr = `Repeat Required: Student missed or failed ${allActiveBacklogs.length} course(s) (${allActiveBacklogs.map((b) => `${b.courseCode} [${b.reason === 'missed' ? 'Unenrolled' : 'Failed'}]`).join(', ')}). In accordance with university academic regulations, final semester GPA is withheld until repeat courses are cleared.`;
         } else {
-          nextSem = 8;
-          const zeroPendingBacklogs = allActiveBacklogs.length === 0;
-          const meetsGraduationCredits = updatedCreditsEarned >= 130 || termCurriculum.length === passedCourses.length;
+          const termGpa = termAttemptedCredits > 0
+            ? Number((termQualityPoints / termAttemptedCredits).toFixed(2))
+            : (u.cgpa || 3.5);
 
-          if (zeroPendingBacklogs && meetsGraduationCredits) {
+          const totalEarnedCr = updatedCreditsEarned > 0 ? updatedCreditsEarned : termEarnedCredits;
+          effectiveGpa = u.cgpa
+            ? Number((((u.cgpa * prevCredits) + termQualityPoints) / totalEarnedCr).toFixed(2))
+            : termGpa;
+
+          if (currentSem < 8) {
+            nextSem = currentSem + 1;
+            if (effectiveGpa >= minGpa) {
+              academicStatus = 'active';
+              decision = 'promoted';
+              promotedCount++;
+              reasonStr = `Satisfactory academic progress (All ${termCurriculum.length} courses passed, SGPA ${termGpa}, CGPA ${effectiveGpa}). Promoted to Semester ${nextSem}.`;
+            } else {
+              academicStatus = 'probation';
+              decision = 'promoted_probation';
+              probationCount++;
+              reasonStr = `Academic Probation advisory: CGPA ${effectiveGpa} < ${minGpa}. Promoted to Semester ${nextSem} under observation.`;
+            }
+          } else {
+            nextSem = 8;
             academicStatus = 'graduated';
             decision = 'graduated';
             graduatedCount++;
             reasonStr = `Graduation requirements conferred: Completed final semester with CGPA ${effectiveGpa}, earned ${updatedCreditsEarned} credits, 0 pending backlogs.`;
-          } else {
-            academicStatus = effectiveGpa < minGpa ? 'probation' : 'active';
-            decision = 'pending_graduation';
-            pendingGraduationCount++;
-            reasonStr = `Graduation deferred: Coursework evaluated (CGPA ${effectiveGpa}), but ${allActiveBacklogs.length} backlog course(s) remain uncleared (${allActiveBacklogs.map((b) => b.courseCode).join(', ')}). Must clear before degree conferral.`;
           }
         }
 
-        if (allActiveBacklogs.length > 0) {
+        if (allActiveBacklogs.length > 0 && !hasUnclearedBacklogs) {
           carryingBacklogsCount++;
         }
 
@@ -1561,12 +1602,18 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const mergedMarks = { ...currentMarks, ...marksUpdate };
+      const attRate = getStudentCourseAttendance(courseId, studentId);
+      const attendanceScore = mergedMarks.attendanceMarks !== undefined
+        ? mergedMarks.attendanceMarks
+        : (attRate.totalLectures > 0 ? Number(((attRate.percentage / 100) * 10).toFixed(1)) : 10);
+
       const calculated = calculateGradeDetails(
         mergedMarks.assignment1,
         mergedMarks.assignment2,
         mergedMarks.assignment3,
         mergedMarks.mids,
-        mergedMarks.finalExam
+        mergedMarks.finalExam,
+        attendanceScore
       );
 
       const finalRecord: CourseGradeRecord = {
@@ -1574,6 +1621,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         studentId,
         marks: {
           ...mergedMarks,
+          attendanceMarks: calculated.attendanceMarks,
           total: calculated.total,
           letterGrade: calculated.letterGrade,
           gradePoints: calculated.gradePoints,
@@ -1591,12 +1639,14 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     if (notifyStudent && student && course) {
+      const attRate = getStudentCourseAttendance(courseId, studentId);
       const calculated = calculateGradeDetails(
         marksUpdate.assignment1,
         marksUpdate.assignment2,
         marksUpdate.assignment3,
         marksUpdate.mids,
-        marksUpdate.finalExam
+        marksUpdate.finalExam,
+        marksUpdate.attendanceMarks !== undefined ? marksUpdate.attendanceMarks : (attRate.totalLectures > 0 ? Number(((attRate.percentage / 100) * 10).toFixed(1)) : 10)
       );
 
       const gradeNotif: AutomatedNotification = {

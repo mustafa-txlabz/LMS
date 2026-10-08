@@ -5,6 +5,7 @@ import {
   Sparkles,
   X,
   AlertTriangle,
+  AlertCircle,
   CheckCircle2,
   Users,
   Award,
@@ -326,25 +327,42 @@ export const SemesterPromotionModal: React.FC<SemesterPromotionModalProps> = ({
                             </div>
                           </td>
                           <td className="py-2.5 px-2 text-center font-mono font-bold text-slate-800">
-                            {r.gpa.toFixed(2)}
+                            {r.decision === 'repeat' || r.academicStatus === 'repeat' || (r.backlogs && r.backlogs.length > 0) ? (
+                              <span className="text-[10px] text-rose-700 font-bold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                                {typeof r.gpa === 'number' && !isNaN(r.gpa) ? `${r.gpa.toFixed(2)} (Prov)` : 'Provisional'}
+                              </span>
+                            ) : (
+                              r.gpa.toFixed(2)
+                            )}
                           </td>
                           <td className="py-2.5 px-3 text-center font-mono text-slate-600 text-[11px]">
                             {r.creditsPassed} / {r.creditsAttempted || 15} Cr
                           </td>
                           <td className="py-2.5 px-3 text-center font-mono">
-                            <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-800">
-                              <span>Sem {r.currentSemester}</span>
-                              <ArrowRight className="w-3 h-3 text-slate-400" />
-                              <span className="text-indigo-700 font-bold">
-                                Sem {r.nextSemester}
+                            {r.decision === 'repeat' || r.academicStatus === 'repeat' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-50 border border-rose-200 text-[11px] font-bold text-rose-700">
+                                Sem {r.currentSemester} (Held)
                               </span>
-                            </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-800">
+                                <span>Sem {r.currentSemester}</span>
+                                <ArrowRight className="w-3 h-3 text-slate-400" />
+                                <span className="text-indigo-700 font-bold">
+                                  Sem {r.nextSemester}
+                                </span>
+                              </div>
+                            )}
                           </td>
                           <td className="py-2.5 px-3 text-center">
                             {r.decision === 'graduated' ? (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-purple-100 text-purple-800 border border-purple-200 inline-flex items-center gap-1">
                                 <GraduationCap className="w-3 h-3" />
                                 <span>Graduated</span>
+                              </span>
+                            ) : r.decision === 'repeat' || r.academicStatus === 'repeat' || (r.backlogs && r.backlogs.length > 0) ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-rose-100 text-rose-800 border border-rose-200 inline-flex items-center gap-1">
+                                <AlertCircle className="w-2.5 h-2.5" />
+                                <span>Repeat Required</span>
                               </span>
                             ) : r.academicStatus === 'probation' || r.decision === 'promoted_probation' ? (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center gap-1">
