@@ -66,10 +66,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const handleTabChange = (tab: 'registration' | 'my-courses' | 'attendance' | 'grades') => {
     setInternalTab(tab);
+    setSearchQuery('');
     if (propSetActiveTab) {
       propSetActiveTab(tab);
     }
   };
+
+  React.useEffect(() => {
+    setSearchQuery('');
+  }, [propActiveTab]);
 
   // Semester registration filter
   const sortedSemesters = React.useMemo(() => [...semesters].sort((a, b) => a.number - b.number), [semesters]);
@@ -139,21 +144,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     let cgpaVal = totalEvaluatedCredits > 0
       ? totalQualityPoints / totalEvaluatedCredits
-      : (typeof currentUser.cgpa === 'number' ? currentUser.cgpa : 3.75);
+      : (typeof currentUser.cgpa === 'number' ? currentUser.cgpa : 0);
 
     if (isNaN(cgpaVal) || !isFinite(cgpaVal)) {
-      cgpaVal = typeof currentUser.cgpa === 'number' ? currentUser.cgpa : 3.75;
+      cgpaVal = typeof currentUser.cgpa === 'number' ? currentUser.cgpa : 0;
     }
 
     return {
       cumulativeCgpa: Number(cgpaVal.toFixed(2)),
-      totalEarnedCredits: earnedCreditsTotal || currentUser.creditsEarned || overallStats.totalCredits,
+      totalEarnedCredits: earnedCreditsTotal || currentUser.creditsEarned || 0,
     };
-  }, [allSemNumbers, enrolledCourses, currentUser, getStudentCourseGrade, overallStats.totalCredits]);
+  }, [allSemNumbers, enrolledCourses, currentUser, getStudentCourseGrade]);
 
   const displayCgpa = (typeof cumulativeCgpa === 'number' && !isNaN(cumulativeCgpa) && isFinite(cumulativeCgpa))
     ? cumulativeCgpa.toFixed(2)
-    : (currentUser.cgpa ? currentUser.cgpa.toFixed(2) : '3.75');
+    : (typeof currentUser.cgpa === 'number' ? currentUser.cgpa.toFixed(2) : '0.00');
 
   // Filter available courses for registration
   const availableCourses = courses.filter((c) => {

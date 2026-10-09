@@ -69,6 +69,18 @@ export const SemesterPromotionModal: React.FC<SemesterPromotionModalProps> = ({
     }
   };
 
+  const resetFormFields = () => {
+    setSearchFilter('');
+    setDecisionFilter('all');
+    setError(null);
+    setBatchSummary(null);
+  };
+
+  const handleClose = () => {
+    resetFormFields();
+    onClose();
+  };
+
   const filteredResults = batchSummary?.results.filter((r) => {
     const matchesSearch =
       !searchFilter.trim() ||
@@ -86,8 +98,14 @@ export const SemesterPromotionModal: React.FC<SemesterPromotionModalProps> = ({
   }) || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-      <div className="w-full max-w-5xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-in flex flex-col max-h-[92vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in"
+      onClick={handleClose}
+    >
+      <div
+        className="w-full max-w-5xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-in flex flex-col max-h-[92vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -110,7 +128,7 @@ export const SemesterPromotionModal: React.FC<SemesterPromotionModalProps> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -419,7 +437,7 @@ export const SemesterPromotionModal: React.FC<SemesterPromotionModalProps> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="px-4 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-100 cursor-pointer"
           >
             {batchSummary ? 'Done & Close' : 'Cancel'}

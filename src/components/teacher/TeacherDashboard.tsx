@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLms, calculateGradeDetails } from '../../context/LmsContext';
 import { Course, User, AttendanceStatus, StudentMarks } from '../../types';
 import { formatStudentRollNumber, getUserPrimaryDepartment } from '../../utils/studentEmail';
@@ -63,10 +63,23 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
   const handleTabChange = (tab: 'grading' | 'attendance' | 'reminders' | 'roster' | 'courses') => {
     setInternalTab(tab);
+    setNewLectureTopic('');
+    setAttendanceSheet({});
+    setReminderTopic('');
+    setReminderNote('');
+    setStudentSearch('');
     if (propSetActiveTab) {
       propSetActiveTab(tab);
     }
   };
+
+  useEffect(() => {
+    setNewLectureTopic('');
+    setAttendanceSheet({});
+    setReminderTopic('');
+    setReminderNote('');
+    setStudentSearch('');
+  }, [propActiveTab]);
 
   // Search filter for students
   const [studentSearch, setStudentSearch] = useState('');
@@ -236,7 +249,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Faculty Teaching Portal · {currentUser.departments && currentUser.departments.length > 0 ? currentUser.departments.join(', ') : currentUser.department}
+            Faculty Teaching Portal · {Array.isArray((currentUser as any).departments) && (currentUser as any).departments.length > 0 ? (currentUser as any).departments.join(', ') : 'Faculty'}
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-0.5">
             {currentUser.name}

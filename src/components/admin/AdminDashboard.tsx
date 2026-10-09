@@ -279,10 +279,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleTabChange = (tab: AdminTab) => {
     setInternalTab(tab);
+    setSearchQuery('');
+    setFacultySearchQuery('');
+    setStudentSearchQuery('');
+    setDepartmentSearchQuery('');
     if (propSetActiveTab) {
       propSetActiveTab(tab);
     }
   };
+
+  useEffect(() => {
+    setSearchQuery('');
+    setFacultySearchQuery('');
+    setStudentSearchQuery('');
+    setDepartmentSearchQuery('');
+  }, [propActiveTab]);
 
   // Department Management States
   const [departmentModalState, setDepartmentModalState] = useState<{
@@ -453,7 +464,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
       setDeleteToast(`Semester "${semFormName}" successfully updated.`);
       setTimeout(() => setDeleteToast(null), 3500);
-      setIsAddSemesterOpen(false);
+      handleCloseSemesterModal();
     } else {
       if (isMaxSemestersReached) {
         setSemesterError('Maximum limit of 8 semesters reached. No more semesters can be created.');
@@ -481,8 +492,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
       setDeleteToast(`Semester "${semFormName}" (Semester ${semNum}) created successfully.`);
       setTimeout(() => setDeleteToast(null), 3500);
-      setIsAddSemesterOpen(false);
+      handleCloseSemesterModal();
     }
+  };
+
+  const handleCloseSemesterModal = () => {
+    setIsAddSemesterOpen(false);
+    setEditingSemester(null);
+    setSemFormName('');
+    setSemFormCode('');
+    setSemesterError(null);
+  };
+
+  const handleCloseCourseModal = () => {
+    setIsAddCourseOpen(false);
+    setEditingCourse(null);
+    setFormCode('');
+    setFormTitle('');
+    setFormDescription('');
+    setFormRoom('');
+    setScheduleValidationError(null);
   };
 
   const handleConfirmDeleteSemester = async () => {
@@ -621,7 +650,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         description: formDescription,
       });
     }
-    setIsAddCourseOpen(false);
+    handleCloseCourseModal();
   };
 
   // Filtered courses strictly synced with existing semesters and department
@@ -2180,7 +2209,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                         {/* CGPA */}
                         <td className="py-3 px-2 text-center font-mono font-bold text-indigo-700">
-                          {(s.cgpa || 3.75).toFixed(2)}
+                          {(s.cgpa !== undefined ? s.cgpa : 0).toFixed(2)}
                         </td>
 
                         {/* Institutional Email */}
@@ -2286,7 +2315,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredDepartments.map((dept) => {
               const deptFaculty = teachers.filter((t) => isTeacherInDept(t, dept.name));
-              const deptStudents = students.filter((s) => (s.departments && s.departments.length > 0 ? s.departments.includes(dept.name) : s.department === dept.name));
+              const deptStudents = students.filter((s) => s.department === dept.name);
               const deptCourses = courses.filter((c) => c.department === dept.name);
               const hodTeacher = teachers.find((t) => t.id === dept.hodId);
 
@@ -2451,15 +2480,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Modal: Add / Edit Course */}
       {isAddCourseOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs">
-          <div className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs"
+          onClick={handleCloseCourseModal}
+        >
+          <div
+            className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider">
                 {editingCourse ? 'Edit Semester Course' : 'Create & Assign Semester Course'}
               </h3>
               <button
-                onClick={() => setIsAddCourseOpen(false)}
-                className="text-slate-400 hover:text-white text-xs"
+                type="button"
+                onClick={handleCloseCourseModal}
+                className="text-slate-400 hover:text-white text-xs cursor-pointer"
               >
                 Cancel
               </button>
@@ -2892,14 +2928,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsAddCourseOpen(false)}
-                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800"
+                  onClick={handleCloseCourseModal}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md shadow-xs"
+                  className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md shadow-xs cursor-pointer"
                 >
                   {editingCourse ? 'Save Changes' : 'Create & Assign Course'}
                 </button>
@@ -2911,8 +2947,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Modal: Add / Edit Semester */}
       {isAddSemesterOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in"
+          onClick={handleCloseSemesterModal}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-indigo-400" />
@@ -2920,11 +2962,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </h3>
               <button
                 type="button"
-                onClick={() => {
-                  setIsAddSemesterOpen(false);
-                  setEditingSemester(null);
-                  setSemesterError(null);
-                }}
+                onClick={handleCloseSemesterModal}
                 className="text-slate-400 hover:text-white text-xs cursor-pointer"
               >
                 ✕
@@ -3043,11 +3081,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsAddSemesterOpen(false);
-                    setEditingSemester(null);
-                    setSemesterError(null);
-                  }}
+                  onClick={handleCloseSemesterModal}
                   className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
                 >
                   Cancel
@@ -3066,8 +3100,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Modal: Delete Semester Confirmation */}
       {semesterToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in"
+          onClick={() => setSemesterToDelete(null)}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-5">
               <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mb-3">
                 <Trash2 className="w-5 h-5" />
@@ -3128,8 +3168,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Confirmation Modal: Delete User */}
       {userToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-in">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in"
+          onClick={() => setUserToDelete(null)}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-5">
               <div className="flex items-start gap-3.5">
                 <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center shrink-0 text-rose-600">
@@ -3216,8 +3262,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Confirmation Modal: Delete Department */}
       {departmentToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-in">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in"
+          onClick={() => setDepartmentToDelete(null)}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-5">
               <div className="flex items-start gap-3.5">
                 <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center shrink-0 text-rose-600">
@@ -3235,7 +3287,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <span className="text-slate-400">Assigned Faculty:</span> {teachers.filter((t) => isTeacherInDept(t, departmentToDelete.name)).length}
                     </div>
                     <div>
-                      <span className="text-slate-400">Enrolled Students:</span> {students.filter((s) => (s.departments && s.departments.length > 0 ? s.departments.includes(departmentToDelete.name) : s.department === departmentToDelete.name)).length}
+                      <span className="text-slate-400">Enrolled Students:</span> {students.filter((s) => s.department === departmentToDelete.name).length}
                     </div>
                     <div>
                       <span className="text-slate-400">Offered Courses:</span> {courses.filter((c) => c.department === departmentToDelete.name).length}

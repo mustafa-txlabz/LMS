@@ -1,6 +1,7 @@
 import express from 'express';
 import type { Request, Response } from 'express';
 import mongooseLib from 'mongoose';
+import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,11 +16,14 @@ import {
   INITIAL_DEPARTMENTS,
   INITIAL_AUDIT_LOGS,
 } from './src/data/mockData.ts';
+import { hashPassword, verifyPassword } from './src/utils/passwordHash.ts';
 
 dotenv.config({ override: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const JWT_SECRET = process.env.JWT_SECRET || 'unicore_university_lms_jwt_secret_key_2026';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -68,9 +72,9 @@ app.use(async (_req: Request, _res: Response, next) => {
 });
 
 // -------------------------------------------------------------
-// MongoDB Schemas & Models
+// MongoDB Role-Specific Schemas & Discriminator Models
 // -------------------------------------------------------------
-const UserSchema = new mongooseLib.Schema(
+const UserBaseSchema = new mongooseLib.Schema(
   {
     id: { type: String, required: true, unique: true },
     name: { type: String, required: true },
@@ -78,35 +82,98 @@ const UserSchema = new mongooseLib.Schema(
     password: { type: String, default: 'password123' },
     role: { type: String, enum: ['admin', 'teacher', 'student'], required: true },
     avatar: { type: String },
-    departments: { type: [String], default: ['Computer Science'] },
-    rollNumber: { type: String },
-    session: { type: Number, default: 2026 },
-    designation: { type: String },
-    semester: { type: Number, default: 1 },
-    admissionType: { type: String, enum: ['fresh', 'transfer'], default: 'fresh' },
-    academicStatus: { type: String, enum: ['active', 'probation', 'detained', 'repeat', 'graduated'], default: 'active' },
-    cgpa: { type: Number, default: 3.5 },
-    creditsEarned: { type: Number, default: 0 },
-    backlogCourses: [
-      {
-        courseId: { type: String, required: true },
-        courseCode: { type: String, required: true },
-        courseTitle: { type: String, default: '' },
-        creditHours: { type: Number, default: 3 },
-        semesterOffered: { type: Number, default: 1 },
-        reason: { type: String, enum: ['failed', 'missed'], default: 'failed' },
-        status: { type: String, enum: ['pending', 'cleared'], default: 'pending' },
-        grade: { type: String },
-        detectedAt: { type: String },
-      },
-    ],
     dob: { type: String, default: '2000-01-01' },
     phone: { type: String },
     address: { type: String },
     bio: { type: String },
   },
-  { timestamps: true }
+  { discriminatorKey: 'role', timestamps: true }
 );
+
+// Admin: Only designation (NO department, departments, cgpa, creditsEarned, academicStatus, admissionType, backlogCourses, semester, rollNumber, session)
+const AdminSchema = new mongooseLib.Schema({
+  designation: { type: String, default: 'System Administrator' },
+});
+
+// Teacher: departments array and designation (NO department string, NO cgpa, creditsEarned, academicStatus, admissionType, backlogCourses, semester, rollNumber, session)
+const TeacherSchema = new mongooseLib.Schema({
+  departments: { type: [String], required: true, default: ['Computer Science'] },
+  designation: { type: String, default: 'Assistant Professor' },
+});
+
+// Student: department string, rollNumber, session, semester, admissionType, academicStatus, cgpa (0 default), creditsEarned, backlogCourses (NO departments array, NO designation)
+const StudentSchema = new mongooseLib.Schema({
+  department: { type: String, required: true, default: 'Computer Science' },
+  rollNumber: { type: String, default: '1' },
+  session: { type: Number, default: 2026 },
+  sessionYear: { type: Number, default: 2026 },
+  semester: { type: Number, default: 1 },
+  admissionType: { type: String, enum: ['fresh', 'transfer'], default: 'fresh' },
+  academicStatus: { type: String, enum: ['active', 'probation', 'detained', 'repeat', 'graduated'], default: 'active' },
+  cgpa: { type: Number, default: 0 }, // New student cgpa defaults to 0, not 3.50!
+  creditsEarned: { type: Number, default: 0 },
+  backlogCourses: [
+    {
+      courseId: { type: String, required: true },
+      courseCode: { type: String, required: true },
+      courseTitle: { type: String, default: '' },
+      creditHours: { type: Number, default: 3 },
+      semesterOffered: { type: Number, default: 1 },
+      reason: { type: String, enum: ['failed', 'missed'], default: 'failed' },
+      status: { type: String, enum: ['pending', 'cleared'], default: 'pending' },
+      grade: { type: String },
+      detectedAt: { type: String },
+    },
+  ],
+});
+
+function sanitizeUserRecord(u: any): any {
+  if (!u) return u;
+  const base: any = {
+    id: u.id,
+    name: u.name,
+    email: typeof u.email === 'string' ? u.email.trim().toLowerCase() : u.email,
+    password: u.password,
+    role: u.role || 'student',
+    avatar: u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || 'User')}&background=0F172A&color=fff`,
+    dob: u.dob || '2000-01-01',
+    phone: u.phone || '',
+    address: u.address || '',
+    bio: u.bio || '',
+    createdAt: u.createdAt,
+    updatedAt: u.updatedAt,
+  };
+
+  if (base.role === 'admin') {
+    if (u.designation) base.designation = u.designation;
+    return base;
+  }
+
+  if (base.role === 'teacher') {
+    const depts = Array.isArray(u.departments) && u.departments.length > 0
+      ? u.departments
+      : (u.department ? [u.department] : ['Computer Science']);
+    base.departments = depts;
+    base.designation = u.designation || 'Assistant Professor';
+    return base;
+  }
+
+  // student
+  const studentDept = typeof u.department === 'string' && u.department.trim()
+    ? u.department.trim()
+    : (Array.isArray(u.departments) && u.departments.length > 0 ? u.departments[0] : 'Computer Science');
+  base.department = studentDept;
+  base.rollNumber = u.rollNumber || '1';
+  base.session = Number(u.session) || 2026;
+  base.sessionYear = Number(u.sessionYear || u.session) || 2026;
+  base.semester = Number(u.semester) || 1;
+  base.admissionType = u.admissionType || 'fresh';
+  base.academicStatus = u.academicStatus || 'active';
+  base.cgpa = typeof u.cgpa === 'number' ? u.cgpa : 0;
+  base.creditsEarned = typeof u.creditsEarned === 'number' ? u.creditsEarned : 0;
+  base.backlogCourses = Array.isArray(u.backlogCourses) ? u.backlogCourses : [];
+  return base;
+}
 
 const SemesterSchema = new mongooseLib.Schema(
   {
@@ -216,7 +283,11 @@ const NotificationSchema = new mongooseLib.Schema(
   { timestamps: true }
 );
 
-const UserModel = mongooseLib.model('User', UserSchema);
+const UserModel = mongooseLib.model('User', UserBaseSchema);
+const AdminModel = (UserModel.discriminators && UserModel.discriminators.admin) || UserModel.discriminator('admin', AdminSchema);
+const TeacherModel = (UserModel.discriminators && UserModel.discriminators.teacher) || UserModel.discriminator('teacher', TeacherSchema);
+const StudentModel = (UserModel.discriminators && UserModel.discriminators.student) || UserModel.discriminator('student', StudentSchema);
+
 const SemesterModel = mongooseLib.model('Semester', SemesterSchema);
 const CourseModel = mongooseLib.model('Course', CourseSchema);
 const EnrollmentModel = mongooseLib.model('Enrollment', EnrollmentSchema);
@@ -260,14 +331,7 @@ const AuditLogModel = mongooseLib.model('AuditLog', AuditLogSchema);
 
 // In-Memory store fallback if MongoDB Atlas is disconnected or network blocked
 let isMongoConnected = false;
-let memoryUsers = INITIAL_USERS.map((u: any) => {
-  const depts = Array.isArray(u.departments) && u.departments.length > 0
-    ? u.departments
-    : (u.department ? [u.department] : ['Computer Science']);
-  const copy = { ...u, departments: depts };
-  delete copy.department;
-  return copy;
-});
+let memoryUsers = INITIAL_USERS.map((u: any) => sanitizeUserRecord(u));
 let memorySemesters = [...INITIAL_SEMESTERS];
 let memoryCourses = [...INITIAL_COURSES];
 let memoryEnrollments = [...INITIAL_ENROLLMENTS];
@@ -339,27 +403,75 @@ async function initMongoDB() {
       console.log('[MongoDB] Departments seeded successfully!');
     }
 
-    // Raw collection migration: Export legacy 'department' string to 'departments' array, then unset 'department'
+    // Raw collection migration: Align documents with role-specific schemas
     try {
       const col = UserModel.collection;
-      const legacyCursor = col.find({ department: { $exists: true } });
-      while (await legacyCursor.hasNext()) {
-        const doc: any = await legacyCursor.next();
-        const currentDepts = Array.isArray(doc.departments) ? doc.departments : [];
-        if (doc.department && !currentDepts.includes(doc.department)) {
-          currentDepts.push(doc.department);
-        }
-        await col.updateOne(
-          { _id: doc._id },
-          {
-            $set: { departments: currentDepts.length > 0 ? currentDepts : ['Computer Science'] },
-            $unset: { department: '' },
+      const allDocs = await col.find({}).toArray();
+      for (const doc of allDocs) {
+        if (doc.role === 'admin') {
+          await col.updateOne(
+            { _id: doc._id },
+            {
+              $unset: {
+                department: '',
+                departments: '',
+                cgpa: '',
+                creditsEarned: '',
+                academicStatus: '',
+                admissionType: '',
+                backlogCourses: '',
+                semester: '',
+                rollNumber: '',
+                session: '',
+                sessionYear: '',
+              },
+            }
+          );
+        } else if (doc.role === 'teacher') {
+          const depts = Array.isArray(doc.departments) && doc.departments.length > 0
+            ? doc.departments
+            : (doc.department ? [doc.department] : ['Computer Science']);
+          await col.updateOne(
+            { _id: doc._id },
+            {
+              $set: { departments: depts },
+              $unset: {
+                department: '',
+                cgpa: '',
+                creditsEarned: '',
+                academicStatus: '',
+                admissionType: '',
+                backlogCourses: '',
+                semester: '',
+                rollNumber: '',
+                session: '',
+                sessionYear: '',
+              },
+            }
+          );
+        } else if (doc.role === 'student') {
+          const dept = typeof doc.department === 'string' && doc.department.trim()
+            ? doc.department.trim()
+            : (Array.isArray(doc.departments) && doc.departments.length > 0 ? doc.departments[0] : 'Computer Science');
+          const updateFields: any = { department: dept };
+          if (doc.cgpa === undefined || doc.cgpa === null) {
+            updateFields.cgpa = 0;
           }
-        );
+          await col.updateOne(
+            { _id: doc._id },
+            {
+              $set: updateFields,
+              $unset: {
+                departments: '',
+                designation: '',
+              },
+            }
+          );
+        }
       }
-      console.log('[Migration] Successfully exported legacy department data and removed department field from raw database!');
+      console.log('[Role Schema Migration] Successfully aligned all database documents with role-specific schemas!');
     } catch (migErr: any) {
-      console.error('[Migration Notice]', migErr.message);
+      console.warn('[Migration Notice]', migErr.message);
     }
   } catch (err: any) {
     console.error('[MongoDB] Connection error (using in-memory fallback):', err.message);
@@ -387,14 +499,7 @@ app.get('/api/bootstrap', async (_req: Request, res: Response) => {
         AuditLogModel.find().sort({ createdAt: -1 }).lean(),
       ]);
 
-      const sanitizedUsers = users.map((u: any) => {
-        const depts = Array.isArray(u.departments) && u.departments.length > 0
-          ? u.departments
-          : (u.department ? [u.department] : ['Computer Science']);
-        const copy = { ...u, departments: depts };
-        delete copy.department;
-        return copy;
-      });
+      const sanitizedUsers = users.map((u: any) => sanitizeUserRecord(u));
 
       return res.json({
         dbConnected: true,
@@ -410,14 +515,7 @@ app.get('/api/bootstrap', async (_req: Request, res: Response) => {
       });
     }
 
-    const sanitizedUsers = memoryUsers.map((u: any) => {
-      const depts = Array.isArray(u.departments) && u.departments.length > 0
-        ? u.departments
-        : (u.department ? [u.department] : ['Computer Science']);
-      const copy = { ...u, departments: depts };
-      delete copy.department;
-      return copy;
-    });
+    const sanitizedUsers = memoryUsers.map((u: any) => sanitizeUserRecord(u));
 
     return res.json({
       dbConnected: false,
@@ -474,15 +572,55 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
 
     // Check password
     const userPass = String(user.password || '').trim();
-    if (userPass && userPass !== cleanPass) {
+    if (userPass && !verifyPassword(cleanPass, userPass)) {
       return res.status(401).json({ error: 'Incorrect password entered.' });
     }
 
-    // Return sanitized user
+    // Return sanitized user with signed JWT
     const { password: _, ...sanitized } = user;
-    return res.json({ user: sanitized, token: `mock-token-${user.id}-${Date.now()}` });
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        rollNumber: user.rollNumber || null,
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.json({ user: sanitized, token });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// Verify JWT token & retrieve current session user
+app.get('/api/auth/me', async (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'No authorization token provided' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    let user: any = null;
+    if (isMongoConnected) {
+      user = await UserModel.findOne({ id: decoded.id }).lean();
+    } else {
+      user = memoryUsers.find((u) => u.id === decoded.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { password: _, ...sanitized } = user;
+    return res.json({ user: sanitized, token });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'Invalid or expired session token' });
   }
 });
 
@@ -630,36 +768,52 @@ app.post('/api/admin/update-domain', async (req: Request, res: Response) => {
   }
 });
 
-// Update Password (by user with current password validation)
+// Update Password (by user with current password validation and JWT verification)
 app.put('/api/users/:id/password', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { currentPassword, newPassword } = req.body;
+
+  // Verify JWT if token is provided
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      // Allow only self or admin
+      if (decoded.id !== id && decoded.role !== 'admin') {
+        return res.status(403).json({ error: 'Unauthorized to change another user\'s password' });
+      }
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired session token' });
+    }
+  }
 
   if (!newPassword || newPassword.length < 6) {
     return res.status(400).json({ error: 'New password must be at least 6 characters long' });
   }
 
   try {
+    const hashedNewPassword = hashPassword(newPassword);
     let user: any = null;
     if (isMongoConnected) {
       user = await UserModel.findOne({ id });
       if (!user) return res.status(404).json({ error: 'User not found' });
 
-      if (user.password && user.password !== currentPassword) {
+      if (user.password && !verifyPassword(currentPassword, user.password)) {
         return res.status(400).json({ error: 'Current password does not match' });
       }
 
-      user.password = newPassword;
+      user.password = hashedNewPassword;
       await user.save();
     } else {
       const idx = memoryUsers.findIndex((u) => u.id === id);
       if (idx === -1) return res.status(404).json({ error: 'User not found' });
 
-      if (memoryUsers[idx].password && memoryUsers[idx].password !== currentPassword) {
+      if (memoryUsers[idx].password && !verifyPassword(currentPassword, memoryUsers[idx].password)) {
         return res.status(400).json({ error: 'Current password does not match' });
       }
 
-      memoryUsers[idx].password = newPassword;
+      memoryUsers[idx].password = hashedNewPassword;
     }
 
     return res.json({ success: true, message: 'Password updated successfully' });
@@ -771,36 +925,81 @@ app.post('/api/admin/users', validateStudentOnboarding, async (req: Request, res
 
   const assignedSemester = role === 'student' ? Number(semester) || 1 : undefined;
 
-  const newUser: any = {
-    id: `usr-${role}-${Date.now()}`,
-    name,
-    email: email.trim().toLowerCase(),
-    password: password || 'password123',
-    role,
-    departments: assignedDepts,
-    rollNumber: role === 'student' ? rollNumber || '1' : undefined,
-    session: role === 'student' ? Number(session) || 2026 : undefined,
-    designation: role === 'teacher' ? designation || 'Assistant Professor' : undefined,
-    semester: assignedSemester,
-    admissionType: role === 'student' ? admissionType : undefined,
-    academicStatus: role === 'student' ? academicStatus : undefined,
-    cgpa: role === 'student' ? 3.5 : undefined,
-    creditsEarned: 0,
-    dob: dob || '2002-01-01',
-    phone: phone || '',
-    address: address || '',
-    bio: bio || '',
-    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0F172A&color=fff`,
-  };
+  const rawPassword = password || 'password123';
+  const hashedPassword = hashPassword(rawPassword);
+
+  let newUser: any;
+  if (role === 'student') {
+    const studentDept = typeof department === 'string' && department.trim()
+      ? department.trim()
+      : (Array.isArray(departments) && departments.length > 0 ? departments[0] : 'Computer Science');
+    newUser = {
+      id: `usr-student-${Date.now()}`,
+      name,
+      email: email.trim().toLowerCase(),
+      password: hashedPassword,
+      role: 'student',
+      department: studentDept,
+      rollNumber: rollNumber || '1',
+      session: Number(session) || 2026,
+      sessionYear: Number(session) || 2026,
+      semester: assignedSemester || 1,
+      admissionType: admissionType || 'fresh',
+      academicStatus: academicStatus || 'active',
+      cgpa: 0, // NEW STUDENT CGPA IS 0 (OR NOT SET)!
+      creditsEarned: 0,
+      backlogCourses: [],
+      dob: dob || '2002-01-01',
+      phone: phone || '',
+      address: address || '',
+      bio: bio || '',
+      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0F172A&color=fff`,
+    };
+  } else if (role === 'teacher') {
+    const teacherDepts = Array.isArray(departments) && departments.length > 0
+      ? departments
+      : (department ? [department] : ['Computer Science']);
+    newUser = {
+      id: `usr-teacher-${Date.now()}`,
+      name,
+      email: email.trim().toLowerCase(),
+      password: hashedPassword,
+      role: 'teacher',
+      departments: teacherDepts,
+      designation: designation || 'Assistant Professor',
+      dob: dob || '1985-01-01',
+      phone: phone || '',
+      address: address || '',
+      bio: bio || '',
+      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0F172A&color=fff`,
+    };
+  } else {
+    newUser = {
+      id: `usr-admin-${Date.now()}`,
+      name,
+      email: email.trim().toLowerCase(),
+      password: hashedPassword,
+      role: 'admin',
+      designation: designation || 'System Administrator',
+      dob: dob || '1980-01-01',
+      phone: phone || '',
+      address: address || '',
+      bio: bio || '',
+      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0F172A&color=fff`,
+    };
+  }
 
   try {
     if (isMongoConnected) {
-      await UserModel.create(newUser);
+      if (role === 'student') await StudentModel.create(newUser);
+      else if (role === 'teacher') await TeacherModel.create(newUser);
+      else await AdminModel.create(newUser);
     } else {
-      memoryUsers.push(newUser);
+      memoryUsers.push(sanitizeUserRecord(newUser));
     }
 
-    const { password: _, ...sanitized } = newUser;
+    const sanitized = sanitizeUserRecord(newUser);
+    delete (sanitized as any).password;
     return res.json({ user: sanitized, success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -812,29 +1011,95 @@ app.put('/api/admin/users/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const updates = { ...req.body };
 
-  if (updates.department && !updates.departments) {
-    updates.departments = [updates.department];
+  if (updates.password) {
+    updates.password = hashPassword(updates.password);
   }
-  delete updates.department;
 
   try {
     if (isMongoConnected) {
+      const existing = await UserModel.findOne({ id });
+      if (!existing) return res.status(404).json({ error: 'User not found' });
+
+      let unsetFields: any = {};
+      if (existing.role === 'admin') {
+        unsetFields = {
+          department: '',
+          departments: '',
+          cgpa: '',
+          creditsEarned: '',
+          academicStatus: '',
+          admissionType: '',
+          backlogCourses: '',
+          semester: '',
+          rollNumber: '',
+          session: '',
+          sessionYear: '',
+        };
+        delete updates.department;
+        delete updates.departments;
+        delete updates.cgpa;
+        delete updates.creditsEarned;
+        delete updates.academicStatus;
+        delete updates.admissionType;
+        delete updates.backlogCourses;
+        delete updates.semester;
+        delete updates.rollNumber;
+        delete updates.session;
+      } else if (existing.role === 'teacher') {
+        unsetFields = {
+          department: '',
+          cgpa: '',
+          creditsEarned: '',
+          academicStatus: '',
+          admissionType: '',
+          backlogCourses: '',
+          semester: '',
+          rollNumber: '',
+          session: '',
+          sessionYear: '',
+        };
+        if (updates.department && !updates.departments) {
+          updates.departments = [updates.department];
+        }
+        delete updates.department;
+        delete updates.cgpa;
+        delete updates.creditsEarned;
+        delete updates.academicStatus;
+        delete updates.admissionType;
+        delete updates.backlogCourses;
+        delete updates.semester;
+        delete updates.rollNumber;
+        delete updates.session;
+      } else if (existing.role === 'student') {
+        unsetFields = {
+          departments: '',
+          designation: '',
+        };
+        if (Array.isArray(updates.departments) && updates.departments.length > 0 && !updates.department) {
+          updates.department = updates.departments[0];
+        }
+        delete updates.departments;
+        delete updates.designation;
+      }
+
       const updated = await UserModel.findOneAndUpdate(
         { id },
-        { $set: updates, $unset: { department: '' } },
+        { $set: updates, ...(Object.keys(unsetFields).length > 0 ? { $unset: unsetFields } : {}) },
         { new: true }
       ).lean();
+
       if (!updated) return res.status(404).json({ error: 'User not found' });
-      const { password: _, ...sanitized } = updated;
+      const sanitized = sanitizeUserRecord(updated);
+      delete (sanitized as any).password;
       return res.json({ user: sanitized, success: true });
     }
 
     const idx = memoryUsers.findIndex((u) => u.id === id);
     if (idx === -1) return res.status(404).json({ error: 'User not found' });
 
-    memoryUsers[idx] = { ...memoryUsers[idx], ...updates };
-    delete memoryUsers[idx].department;
-    const { password: _, ...sanitized } = memoryUsers[idx];
+    memoryUsers[idx] = sanitizeUserRecord({ ...memoryUsers[idx], ...updates });
+    const sanitized = sanitizeUserRecord(memoryUsers[idx]);
+    delete (sanitized as any).password;
     return res.json({ user: sanitized, success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1628,15 +1893,16 @@ app.post('/api/admin/users/:id/reset-password', async (req: Request, res: Respon
   }
 
   try {
+    const hashedPassword = hashPassword(newPassword);
     if (isMongoConnected) {
       const user = await UserModel.findOne({ id });
       if (!user) return res.status(404).json({ error: 'User not found' });
-      user.password = newPassword;
+      user.password = hashedPassword;
       await user.save();
     } else {
       const idx = memoryUsers.findIndex((u) => u.id === id);
       if (idx === -1) return res.status(404).json({ error: 'User not found' });
-      memoryUsers[idx].password = newPassword;
+      memoryUsers[idx].password = hashedPassword;
     }
 
     return res.json({ success: true, message: 'Password has been successfully reset' });
@@ -1826,7 +2092,8 @@ app.put('/api/admin/departments/:id', async (req: Request, res: Response) => {
 
       // If department was renamed, cascade update to users and courses
       if (oldName !== cleanName) {
-        await UserModel.updateMany({ departments: oldName }, { $set: { 'departments.$': cleanName } });
+        await TeacherModel.updateMany({ departments: oldName }, { $set: { 'departments.$': cleanName } });
+        await StudentModel.updateMany({ department: oldName }, { $set: { department: cleanName } });
         await CourseModel.updateMany({ department: oldName }, { $set: { department: cleanName } });
       }
 
@@ -1872,8 +2139,17 @@ app.put('/api/admin/departments/:id', async (req: Request, res: Response) => {
 
       if (oldName !== cleanName) {
         memoryUsers = memoryUsers.map((u) => {
-          const depts = (u.departments || []).map((d: string) => (d === oldName ? cleanName : d));
-          return { ...u, departments: depts };
+          if (u.role === 'student') {
+            if (u.department === oldName) {
+              return { ...u, department: cleanName };
+            }
+            return u;
+          }
+          if (u.role === 'teacher') {
+            const depts = (u.departments || []).map((d: string) => (d === oldName ? cleanName : d));
+            return { ...u, departments: depts };
+          }
+          return u;
         });
         memoryCourses = memoryCourses.map((c) => (c.department === oldName ? { ...c, department: cleanName } : c));
       }

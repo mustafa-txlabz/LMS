@@ -196,9 +196,13 @@ export const Header: React.FC<HeaderProps> = ({
                       <div className="text-xs font-bold text-slate-900">{currentUser.name}</div>
                       <div className="text-[11px] text-slate-500 font-mono truncate">{currentUser.email}</div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
-                        {currentUser.departments && currentUser.departments.length > 0
-                          ? currentUser.departments.join(', ')
-                          : currentUser.department || 'Academic'}
+                        {currentUser.role === 'teacher'
+                          ? (Array.isArray(currentUser.departments) && currentUser.departments.length > 0
+                              ? currentUser.departments.join(', ')
+                              : 'Faculty Member')
+                          : currentUser.role === 'student'
+                          ? (currentUser.department || 'Undergraduate Student')
+                          : 'University Administration'}
                       </div>
                     </div>
 

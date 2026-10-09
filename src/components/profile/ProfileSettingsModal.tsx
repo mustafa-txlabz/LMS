@@ -1,18 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLms } from '../../context/LmsContext';
 import {
   X,
   User as UserIcon,
-  Lock,
   Calendar,
   Phone,
   MapPin,
   FileText,
-  Mail,
   CheckCircle2,
   AlertCircle,
   Shield,
   KeyRound,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 export const ProfileSettingsModal: React.FC = () => {
@@ -39,9 +39,52 @@ export const ProfileSettingsModal: React.FC = () => {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const resetPasswordFields = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowCurrentPassword(false);
+    setShowNewPassword(false);
+    setShowConfirmPassword(false);
+    setStatusMessage(null);
+  };
+
+  const resetAllFields = () => {
+    resetPasswordFields();
+    if (currentUser) {
+      setName(currentUser.name || '');
+      setEmail(currentUser.email || '');
+      setDob(currentUser.dob || '2000-01-01');
+      setPhone(currentUser.phone || '');
+      setAddress(currentUser.address || '');
+      setBio(currentUser.bio || '');
+      setAvatar(currentUser.avatar || '');
+    }
+  };
+
+  const handleClose = () => {
+    resetAllFields();
+    setIsProfileModalOpen(false);
+  };
+
+  const handleTabChange = (tab: 'profile' | 'security') => {
+    setActiveTab(tab);
+    // Reset fields to empty when switching tabs/options
+    resetPasswordFields();
+  };
+
+  useEffect(() => {
+    if (isProfileModalOpen) {
+      resetAllFields();
+    }
+  }, [isProfileModalOpen]);
 
   if (!isProfileModalOpen || !currentUser) return null;
 
@@ -62,15 +105,7 @@ export const ProfileSettingsModal: React.FC = () => {
 
     setIsSubmitting(false);
     if (res.success) {
-      if (res.domainChanged) {
-        setStatusMessage({
-          type: 'success',
-          text: `University domain changed to @${email.split('@')[1]}! All student, faculty, and admin emails have been automatically updated.`,
-        });
-      } else {
-        setStatusMessage({ type: 'success', text: 'Profile information updated successfully in database!' });
-      }
-      setTimeout(() => setStatusMessage(null), 4500);
+      handleClose();
     } else {
       setStatusMessage({ type: 'error', text: res.error || 'Failed to update profile.' });
     }
@@ -95,19 +130,21 @@ export const ProfileSettingsModal: React.FC = () => {
     setIsSubmitting(false);
 
     if (res.success) {
-      setStatusMessage({ type: 'success', text: 'Password changed successfully!' });
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      setTimeout(() => setStatusMessage(null), 3500);
+      handleClose();
     } else {
       setStatusMessage({ type: 'error', text: res.error || 'Failed to change password.' });
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-      <div className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-scale-in">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in"
+      onClick={handleClose}
+    >
+      <div
+        className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-scale-in"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Top Bar */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -117,7 +154,7 @@ export const ProfileSettingsModal: React.FC = () => {
             </h3>
           </div>
           <button
-            onClick={() => setIsProfileModalOpen(false)}
+            onClick={handleClose}
             className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-all hover:rotate-90 duration-200 cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -128,10 +165,7 @@ export const ProfileSettingsModal: React.FC = () => {
         <div className="flex border-b border-slate-200 bg-slate-50 px-5 pt-2 gap-2 text-xs font-semibold">
           <button
             type="button"
-            onClick={() => {
-              setActiveTab('profile');
-              setStatusMessage(null);
-            }}
+            onClick={() => handleTabChange('profile')}
             className={`pb-2.5 px-3 border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'profile'
                 ? 'border-indigo-600 text-indigo-600 font-bold'
@@ -143,10 +177,7 @@ export const ProfileSettingsModal: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => {
-              setActiveTab('security');
-              setStatusMessage(null);
-            }}
+            onClick={() => handleTabChange('security')}
             className={`pb-2.5 px-3 border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'security'
                 ? 'border-indigo-600 text-indigo-600 font-bold'
@@ -325,7 +356,7 @@ export const ProfileSettingsModal: React.FC = () => {
               <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsProfileModalOpen(false)}
+                  onClick={handleClose}
                   className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800"
                 >
                   Cancel
@@ -352,50 +383,83 @@ export const ProfileSettingsModal: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Current Password
                 </label>
-                <input
-                  type="password"
-                  required
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  placeholder="Enter your current password"
-                  className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500"
-                />
+                <div className="relative">
+                  <input
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    required
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter your current password"
+                    className="w-full pl-3 pr-9 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                    title={showCurrentPassword ? 'Hide current password' : 'Show current password'}
+                    aria-label={showCurrentPassword ? 'Hide current password' : 'Show current password'}
+                  >
+                    {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   New Password
                 </label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="At least 6 characters"
-                  className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                    className="w-full pl-3 pr-9 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                    title={showNewPassword ? 'Hide new password' : 'Show new password'}
+                    aria-label={showNewPassword ? 'Hide new password' : 'Show new password'}
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Confirm New Password
                 </label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Re-enter new password"
-                  className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500"
-                />
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter new password"
+                    className="w-full pl-3 pr-9 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                    title={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsProfileModalOpen(false)}
+                  onClick={handleClose}
                   className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800"
                 >
                   Cancel

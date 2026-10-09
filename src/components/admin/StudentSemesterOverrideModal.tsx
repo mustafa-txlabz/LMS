@@ -155,7 +155,7 @@ export const StudentSemesterOverrideModal: React.FC<StudentSemesterOverrideModal
       );
       if (result.success) {
         if (onSuccess) onSuccess(result.auditLog);
-        onClose();
+        handleClose();
       } else {
         setError(result.error || 'Failed to execute manual semester override.');
       }
@@ -166,6 +166,16 @@ export const StudentSemesterOverrideModal: React.FC<StudentSemesterOverrideModal
     }
   };
 
+  const resetFormFields = () => {
+    setReason('');
+    setError(null);
+  };
+
+  const handleClose = () => {
+    resetFormFields();
+    onClose();
+  };
+
   const formattedRoll = formatStudentRollNumber(
     student.session || student.sessionYear,
     studentDept,
@@ -173,8 +183,14 @@ export const StudentSemesterOverrideModal: React.FC<StudentSemesterOverrideModal
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-      <div className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-in flex flex-col max-h-[92vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in"
+      onClick={handleClose}
+    >
+      <div
+        className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-in flex flex-col max-h-[92vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Header */}
         <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -197,7 +213,7 @@ export const StudentSemesterOverrideModal: React.FC<StudentSemesterOverrideModal
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -251,7 +267,7 @@ export const StudentSemesterOverrideModal: React.FC<StudentSemesterOverrideModal
                   <span>·</span>
                   <span>Session: <strong className="font-mono text-slate-800">{student.session || 2026}</strong></span>
                   <span>·</span>
-                  <span>CGPA: <strong className="font-mono text-indigo-700">{(student.cgpa || 3.5).toFixed(2)}</strong></span>
+                  <span>CGPA: <strong className="font-mono text-indigo-700">{(student.cgpa !== undefined ? student.cgpa : 0).toFixed(2)}</strong></span>
                 </div>
               </div>
             </div>
@@ -436,7 +452,7 @@ export const StudentSemesterOverrideModal: React.FC<StudentSemesterOverrideModal
             <button
               type="button"
               disabled={isSubmitting}
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
             >
               Cancel

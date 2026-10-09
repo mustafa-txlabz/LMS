@@ -245,6 +245,26 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const resetFormFields = () => {
+    setName('');
+    setPassword('password123');
+    setTeacherEmail('');
+    setRollNumber('');
+    setPhone('');
+    setAddress('');
+    setBio('');
+    setNewPasswordToReset('');
+    setFormError(null);
+    setToast(null);
+    setIsResetPasswordOpen(false);
+    setIsDeleteConfirmOpen(false);
+  };
+
+  const handleClose = () => {
+    resetFormFields();
+    onClose();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -271,55 +291,101 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
 
     const finalEmail = targetRole === 'student' ? generatedStudentEmail : teacherEmail.trim().toLowerCase();
     const finalRollNumber = targetRole === 'student' ? cleanRoll : undefined;
-    const finalPrimaryDept = targetRole === 'teacher' ? selectedDepartments[0] : department;
-    const finalDeptList = targetRole === 'teacher' ? selectedDepartments : [department];
 
     const finalSemester = targetRole === 'student'
       ? (admissionType === 'fresh' && !isEditing ? 1 : Number(semester))
       : undefined;
 
     if (isEditing && userToEdit) {
-      await adminUpdateUser(userToEdit.id, {
-        name,
-        email: finalEmail,
-        department: finalPrimaryDept,
-        departments: finalDeptList,
-        session: targetRole === 'student' ? Number(session) : undefined,
-        sessionYear: targetRole === 'student' ? Number(session) : undefined,
-        rollNumber: finalRollNumber,
-        designation: targetRole === 'teacher' ? designation : undefined,
-        semester: finalSemester,
-        admissionType: targetRole === 'student' ? admissionType : undefined,
-        academicStatus: targetRole === 'student' ? (userToEdit.academicStatus || 'active') : undefined,
-        dob,
-        phone,
-        address,
-        bio,
-      });
+      if (targetRole === 'student') {
+        await adminUpdateUser(userToEdit.id, {
+          name,
+          email: finalEmail,
+          department,
+          session: Number(session),
+          sessionYear: Number(session),
+          rollNumber: finalRollNumber,
+          semester: finalSemester,
+          admissionType,
+          academicStatus: userToEdit.academicStatus || 'active',
+          dob,
+          phone,
+          address,
+          bio,
+        });
+      } else if (targetRole === 'teacher') {
+        await adminUpdateUser(userToEdit.id, {
+          name,
+          email: finalEmail,
+          departments: selectedDepartments,
+          designation,
+          dob,
+          phone,
+          address,
+          bio,
+        });
+      } else {
+        await adminUpdateUser(userToEdit.id, {
+          name,
+          email: finalEmail,
+          designation,
+          dob,
+          phone,
+          address,
+          bio,
+        });
+      }
     } else {
-      await adminAddUser({
-        name,
-        email: finalEmail,
-        password,
-        role: targetRole as Role,
-        department: finalPrimaryDept,
-        departments: finalDeptList,
-        session: targetRole === 'student' ? Number(session) : undefined,
-        sessionYear: targetRole === 'student' ? Number(session) : undefined,
-        rollNumber: finalRollNumber,
-        designation: targetRole === 'teacher' ? designation : undefined,
-        semester: finalSemester,
-        admissionType: targetRole === 'student' ? admissionType : undefined,
-        academicStatus: 'active',
-        dob,
-        phone,
-        address,
-        bio,
-      });
+      if (targetRole === 'student') {
+        await adminAddUser({
+          name,
+          email: finalEmail,
+          password,
+          role: 'student',
+          department,
+          session: Number(session),
+          sessionYear: Number(session),
+          rollNumber: finalRollNumber,
+          semester: finalSemester,
+          admissionType,
+          academicStatus: 'active',
+          cgpa: 0,
+          creditsEarned: 0,
+          dob,
+          phone,
+          address,
+          bio,
+        });
+      } else if (targetRole === 'teacher') {
+        await adminAddUser({
+          name,
+          email: finalEmail,
+          password,
+          role: 'teacher',
+          departments: selectedDepartments,
+          designation,
+          dob,
+          phone,
+          address,
+          bio,
+        });
+      } else {
+        await adminAddUser({
+          name,
+          email: finalEmail,
+          password,
+          role: 'admin',
+          designation,
+          dob,
+          phone,
+          address,
+          bio,
+        });
+      }
     }
 
     setIsSubmitting(false);
-    onClose();
+    handleClose();
   };
 
   const handleExecuteResetPassword = async () => {
@@ -345,7 +411,7 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
     setIsDeleting(true);
     try {
       await adminDeleteUser(userToEdit.id);
-      onClose();
+      handleClose();
     } catch (err) {
       console.error('Failed to delete user:', err);
       setFormError('Failed to delete user. Please try again.');
@@ -354,8 +420,14 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-      <div className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-scale-in">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in"
+      onClick={handleClose}
+    >
+      <div
+        className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-scale-in"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -383,7 +455,7 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-all hover:rotate-90 duration-200 cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -1092,7 +1164,7 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleClose}
                 className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
               >
                 Cancel

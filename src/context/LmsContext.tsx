@@ -2,6 +2,9 @@ import React, { createContext, useContext, useState, useEffect, useMemo } from '
 import {
   Role,
   User,
+  AdminUser,
+  TeacherUser,
+  StudentUser,
   Semester,
   Course,
   Enrollment,
@@ -31,6 +34,7 @@ import {
   getUserDepartments,
   getUserPrimaryDepartment,
 } from '../utils/studentEmail';
+import { hashPassword, verifyPassword } from '../utils/passwordHash';
 
 interface LmsContextType {
   currentUser: User | null;
@@ -218,6 +222,79 @@ export function calculateGradeDetails(
   return { total, letterGrade, gradePoints, attendanceMarks: attMarks };
 }
 
+export const sanitizeUser = (u: any): User => {
+  if (!u) return u;
+  const role: Role = u.role || 'student';
+  const email = typeof u.email === 'string' ? u.email.replace(/@nicore\.edu\.pk$/i, '@uet.edu.pk') : '';
+  const avatar = u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || 'User')}&background=0F172A&color=fff`;
+
+  if (role === 'admin') {
+    const admin: AdminUser = {
+      id: u.id,
+      name: u.name || '',
+      email,
+      password: u.password,
+      role: 'admin',
+      avatar,
+      designation: u.designation,
+      dob: u.dob,
+      phone: u.phone,
+      address: u.address,
+      bio: u.bio,
+    };
+    return admin;
+  }
+
+  if (role === 'teacher') {
+    const depts = Array.isArray(u.departments) && u.departments.length > 0
+      ? u.departments
+      : (u.department ? [u.department] : ['Computer Science']);
+    const teacher: TeacherUser = {
+      id: u.id,
+      name: u.name || '',
+      email,
+      password: u.password,
+      role: 'teacher',
+      departments: depts,
+      designation: u.designation || 'Assistant Professor',
+      avatar,
+      dob: u.dob,
+      phone: u.phone,
+      address: u.address,
+      bio: u.bio,
+    };
+    return teacher;
+  }
+
+  // Student
+  const singleDept = typeof u.department === 'string' && u.department.trim()
+    ? u.department.trim()
+    : (Array.isArray(u.departments) && u.departments.length > 0 ? u.departments[0] : 'Computer Science');
+  const student: StudentUser = {
+    id: u.id,
+    name: u.name || '',
+    email,
+    password: u.password,
+    role: 'student',
+    avatar,
+    department: singleDept,
+    rollNumber: u.rollNumber || '1',
+    session: Number(u.session) || 2026,
+    sessionYear: Number(u.sessionYear || u.session) || 2026,
+    semester: Number(u.semester) || 1,
+    admissionType: u.admissionType || 'fresh',
+    academicStatus: u.academicStatus || 'active',
+    cgpa: typeof u.cgpa === 'number' ? u.cgpa : 0,
+    creditsEarned: typeof u.creditsEarned === 'number' ? u.creditsEarned : 0,
+    backlogCourses: Array.isArray(u.backlogCourses) ? u.backlogCourses : [],
+    dob: u.dob,
+    phone: u.phone,
+    address: u.address,
+    bio: u.bio,
+  };
+  return student;
+};
+
 export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'users');
@@ -230,18 +307,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       raw = INITIAL_USERS;
     }
 
-    return raw.map((u: any) => {
-      const depts = Array.isArray(u.departments) && u.departments.length > 0
-        ? u.departments
-        : (u.department ? [u.department] : ['Computer Science']);
-      const email = typeof u.email === 'string' ? u.email.replace(/@nicore\.edu\.pk$/i, '@uet.edu.pk') : u.email;
-      return {
-        ...u,
-        email,
-        departments: depts,
-        department: depts[0],
-      };
-    });
+    return raw.map((u: any) => sanitizeUser(u));
   });
 
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
@@ -249,14 +315,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (saved) {
       try {
         const u = JSON.parse(saved);
-        const depts = Array.isArray(u.departments) && u.departments.length > 0
-          ? u.departments
-          : (u.department ? [u.department] : ['Computer Science']);
-        return {
-          ...u,
-          departments: depts,
-          department: depts[0],
-        };
+        return sanitizeUser(u);
       } catch {
         return null;
       }
@@ -317,16 +376,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data && data.users && data.users.length > 0) {
-          const sanitizedUsers: User[] = data.users.map((u: any) => {
-            const depts = Array.isArray(u.departments) && u.departments.length > 0
-              ? u.departments
-              : (u.department ? [u.department] : ['Computer Science']);
-            return {
-              ...u,
-              departments: depts,
-              department: depts[0],
-            };
-          });
+          const sanitizedUsers: User[] = data.users.map((u: any) => sanitizeUser(u));
           setUsers(sanitizedUsers);
           setSemesters(data.semesters);
           setCourses(data.courses);
@@ -416,6 +466,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (res.ok) {
         const data = await res.json();
+        if (data.token) {
+          localStorage.setItem(STORAGE_KEY_PREFIX + 'jwt_token', data.token);
+        }
         setCurrentUser(data.user);
         return { success: true };
       }
@@ -442,11 +495,18 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const userPass = String(matchedUser.password || '').trim();
-    if (userPass && userPass !== cleanPass) {
+    if (userPass && !verifyPassword(cleanPass, userPass)) {
       return { success: false, error: 'Incorrect password entered.' };
     }
 
     const { password: _, ...sanitized } = matchedUser;
+    // Generate fallback offline JWT representation
+    try {
+      const fallbackToken = btoa(JSON.stringify({ id: sanitized.id, email: sanitized.email, role: sanitized.role, iat: Date.now() }));
+      localStorage.setItem(STORAGE_KEY_PREFIX + 'jwt_token', fallbackToken);
+    } catch {
+      // ignore
+    }
     setCurrentUser(sanitized);
     return { success: true };
   };
@@ -455,6 +515,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = () => {
     setCurrentUser(null);
     localStorage.removeItem(STORAGE_KEY_PREFIX + 'auth_user');
+    localStorage.removeItem(STORAGE_KEY_PREFIX + 'jwt_token');
   };
 
   // Profile Update (Name, DOB, Phone, Address, Bio, Avatar, Email)
@@ -495,7 +556,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUsers((prev) =>
         prev.map((u) => {
           if (u.id === userId) {
-            return { ...u, ...data, email: data.email!.trim().toLowerCase() };
+            return sanitizeUser({ ...u, ...data, email: data.email!.trim().toLowerCase() });
           }
           if (u.role === 'student') {
             cascadedCount++;
@@ -505,12 +566,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               u.rollNumber,
               newDomain
             );
-            return { ...u, email: updatedStudentEmail };
+            return sanitizeUser({ ...u, email: updatedStudentEmail });
           }
           if (oldDomain && u.email && u.email.endsWith(`@${oldDomain}`)) {
             cascadedCount++;
             const localPart = u.email.split('@')[0];
-            return { ...u, email: `${localPart}@${newDomain}` };
+            return sanitizeUser({ ...u, email: `${localPart}@${newDomain}` });
           }
           return u;
         })
@@ -530,12 +591,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } else {
       setUsers((prev) =>
-        prev.map((u) => (u.id === userId ? { ...u, ...data } : u))
+        prev.map((u) => (u.id === userId ? sanitizeUser({ ...u, ...data }) : u))
       );
     }
 
     if (currentUser && currentUser.id === userId) {
-      setCurrentUser((prev) => (prev ? { ...prev, ...data } : null));
+      setCurrentUser((prev) => (prev ? sanitizeUser({ ...prev, ...data }) : null));
     }
 
     return { success: true, domainChanged, cascadedCount };
@@ -614,22 +675,27 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const user = users.find((u) => u.id === userId);
     if (!user) return { success: false, error: 'User not found.' };
 
-    if (user.password && user.password !== currentPassword) {
+    if (user.password && !verifyPassword(currentPassword, user.password)) {
       return { success: false, error: 'Current password does not match.' };
     }
 
     try {
+      const token = localStorage.getItem('lms_jwt_token') || sessionStorage.getItem('lms_jwt_token');
       await fetch(`/api/users/${userId}/password`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ currentPassword, newPassword }),
       });
     } catch {
       // Continue locally
     }
 
+    const hashedPassword = hashPassword(newPassword);
     setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, password: newPassword } : u))
+      prev.map((u) => (u.id === userId ? { ...u, password: hashedPassword } : u))
     );
 
     return { success: true };
@@ -637,58 +703,80 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Admin: Add Student or Teacher
   const adminAddUser = async (userData: Partial<User>): Promise<{ success: boolean; error?: string }> => {
-    const assignedDepts: string[] = Array.isArray(userData.departments) && userData.departments.length > 0
-      ? userData.departments
-      : userData.department ? [userData.department] : ['Computer Science'];
+    const rawPassword = userData.password || 'password123';
+    const hashedPassword = hashPassword(rawPassword);
+    const role: Role = (userData.role as Role) || 'student';
 
-    // Student Onboarding Rules:
-    // - If Admission Type is "Fresh", automatically set current_semester = 1 and lock it.
-    // - If Admission Type is "Transfer" (or Lateral Entry), allow manual semester selection.
-    // - Default status set to "active".
-    const admissionType = userData.admissionType === 'transfer' ? 'transfer' : 'fresh';
-    const assignedSemester = userData.role === 'student'
-      ? (admissionType === 'fresh' ? 1 : (Number(userData.semester) || 2))
-      : undefined;
-    const academicStatus = userData.role === 'student' ? (userData.academicStatus || 'active') : undefined;
-
-    const newUser: User = {
-      id: `usr-${userData.role || 'user'}-${Date.now()}`,
-      name: userData.name || '',
-      email: userData.email || '',
-      password: userData.password || 'password123',
-      role: userData.role || 'student',
-      department: assignedDepts[0] || userData.department || 'Computer Science',
-      departments: assignedDepts,
-      rollNumber: userData.role === 'student' ? userData.rollNumber || '1' : undefined,
-      session: userData.role === 'student' ? Number(userData.session) || 2026 : undefined,
-      sessionYear: userData.role === 'student' ? Number(userData.session) || 2026 : undefined,
-      designation: userData.role === 'teacher' ? userData.designation || 'Assistant Professor' : undefined,
-      semester: assignedSemester,
-      admissionType: userData.role === 'student' ? admissionType : undefined,
-      academicStatus,
-      cgpa: userData.role === 'student' ? 3.5 : undefined,
-      creditsEarned: 0,
-      dob: userData.dob || '2002-01-01',
-      phone: userData.phone || '',
-      address: userData.address || '',
-      bio: userData.bio || '',
-      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name || 'User')}&background=0F172A&color=fff`,
-    };
-
-    const userPayload: any = {
-      ...userData,
-      departments: assignedDepts,
-      semester: assignedSemester,
-      admissionType: userData.role === 'student' ? admissionType : undefined,
-      academicStatus,
-    };
-    delete userPayload.department;
+    let newUser: User;
+    if (role === 'student') {
+      const admissionType = userData.admissionType === 'transfer' ? 'transfer' : 'fresh';
+      const assignedSemester = admissionType === 'fresh' ? 1 : (Number(userData.semester) || 1);
+      const studentDept = typeof userData.department === 'string' && userData.department.trim()
+        ? userData.department.trim()
+        : (Array.isArray((userData as any).departments) && (userData as any).departments.length > 0
+            ? (userData as any).departments[0]
+            : 'Computer Science');
+      newUser = {
+        id: `usr-student-${Date.now()}`,
+        name: userData.name || '',
+        email: userData.email || '',
+        password: hashedPassword,
+        role: 'student',
+        department: studentDept,
+        rollNumber: userData.rollNumber || '1',
+        session: Number(userData.session) || 2026,
+        sessionYear: Number(userData.session) || 2026,
+        semester: assignedSemester,
+        admissionType,
+        academicStatus: 'active',
+        cgpa: 0, // NEW STUDENT CGPA IS 0 (OR NOT SET)!
+        creditsEarned: 0,
+        backlogCourses: [],
+        dob: userData.dob || '2002-01-01',
+        phone: userData.phone || '',
+        address: userData.address || '',
+        bio: userData.bio || '',
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name || 'Student')}&background=0F172A&color=fff`,
+      };
+    } else if (role === 'teacher') {
+      const assignedDepts: string[] = Array.isArray((userData as any).departments) && (userData as any).departments.length > 0
+        ? (userData as any).departments
+        : (userData.department ? [userData.department] : ['Computer Science']);
+      newUser = {
+        id: `usr-teacher-${Date.now()}`,
+        name: userData.name || '',
+        email: userData.email || '',
+        password: hashedPassword,
+        role: 'teacher',
+        departments: assignedDepts,
+        designation: (userData as any).designation || 'Assistant Professor',
+        dob: userData.dob || '1985-01-01',
+        phone: userData.phone || '',
+        address: userData.address || '',
+        bio: userData.bio || '',
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name || 'Teacher')}&background=0F172A&color=fff`,
+      };
+    } else {
+      newUser = {
+        id: `usr-admin-${Date.now()}`,
+        name: userData.name || '',
+        email: userData.email || '',
+        password: hashedPassword,
+        role: 'admin',
+        designation: (userData as any).designation || 'Administrator',
+        dob: userData.dob || '1980-01-01',
+        phone: userData.phone || '',
+        address: userData.address || '',
+        bio: userData.bio || '',
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name || 'Admin')}&background=0F172A&color=fff`,
+      };
+    }
 
     try {
       await fetch('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userPayload),
+        body: JSON.stringify(newUser),
       });
     } catch {
       // Continue locally
@@ -700,6 +788,11 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Admin: Update Student or Teacher
   const adminUpdateUser = async (userId: string, userData: Partial<User>): Promise<{ success: boolean; error?: string }> => {
+    const userUpdates = { ...userData };
+    if (userUpdates.password) {
+      userUpdates.password = hashPassword(userUpdates.password);
+    }
+
     try {
       await fetch(`/api/admin/users/${userId}`, {
         method: 'PUT',
@@ -711,11 +804,11 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, ...userData } : u))
+      prev.map((u) => (u.id === userId ? sanitizeUser({ ...u, ...userUpdates }) : u))
     );
 
     if (currentUser && currentUser.id === userId) {
-      setCurrentUser((prev) => (prev ? { ...prev, ...userData } : null));
+      setCurrentUser((prev) => (prev ? sanitizeUser({ ...prev, ...userUpdates }) : null));
     }
 
     return { success: true };
@@ -762,15 +855,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setUsers((prev) =>
         prev.map((u) => {
-          if (u.id === studentId) {
-            return {
+          if (u.id === studentId && u.role === 'student') {
+            return sanitizeUser({
               ...u,
               semester: newSemester,
               academicStatus: (u.academicStatus === 'detained' || u.academicStatus === 'repeat') ? 'active' : (u.academicStatus || 'active'),
               ...(newSession ? { session: Number(newSession), sessionYear: Number(newSession) } : {}),
               ...(newRollNumber ? { rollNumber: newRollNumber } : {}),
               ...(newEmail ? { email: newEmail } : {}),
-            };
+            });
           }
           return u;
         })
@@ -784,7 +877,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       // Offline / in-memory fallback
       const student = users.find((u) => u.id === studentId);
-      if (!student) return { success: false, error: 'Student not found.' };
+      if (!student || student.role !== 'student') return { success: false, error: 'Student not found.' };
 
       const prevSem = student.semester || 1;
       const prevStatus = student.academicStatus || 'active';
@@ -807,15 +900,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setUsers((prev) =>
         prev.map((u) =>
-          u.id === studentId
-            ? {
+          u.id === studentId && u.role === 'student'
+            ? sanitizeUser({
                 ...u,
                 semester: newSemester,
                 academicStatus: newStatus,
                 ...(newSession ? { session: Number(newSession), sessionYear: Number(newSession) } : {}),
                 ...(newRollNumber ? { rollNumber: newRollNumber } : {}),
                 ...(newEmail ? { email: newEmail } : {}),
-              }
+              })
             : u
         )
       );
@@ -1037,7 +1130,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } else {
           const termGpa = termAttemptedCredits > 0
             ? Number((termQualityPoints / termAttemptedCredits).toFixed(2))
-            : (u.cgpa || 3.5);
+            : (u.cgpa ?? 0);
 
           const totalEarnedCr = updatedCreditsEarned > 0 ? updatedCreditsEarned : termEarnedCredits;
           effectiveGpa = u.cgpa
@@ -1074,7 +1167,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           studentId: u.id,
           studentName: u.name,
           rollNumber: u.rollNumber,
-          department: studentDepts[0] || 'Computer Science',
+          department: (u as StudentUser).department || studentDepts[0] || 'Computer Science',
           currentSemester: currentSem,
           nextSemester: nextSem,
           gpa: effectiveGpa,
@@ -1089,14 +1182,14 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           reason: reasonStr,
         });
 
-        return {
+        return sanitizeUser({
           ...u,
           semester: nextSem,
           academicStatus,
           cgpa: effectiveGpa,
           creditsEarned: updatedCreditsEarned,
           backlogCourses: allActiveBacklogs,
-        };
+        });
       });
 
       setUsers(updatedUsers);
@@ -1157,8 +1250,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Continue locally
     }
 
+    const hashedPassword = hashPassword(newPassword);
     setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, password: newPassword } : u))
+      prev.map((u) => (u.id === userId ? { ...u, password: hashedPassword } : u))
     );
 
     return { success: true };
@@ -1217,14 +1311,19 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (oldDept && oldDept.name !== updates.name) {
           setUsers((prev) =>
             prev.map((u) => {
-              const depts = (u.departments || [u.department || '']).map((d) =>
-                d === oldDept.name ? updates.name! : d
-              );
-              return {
-                ...u,
-                departments: depts,
-                department: depts[0],
-              };
+              if (u.role === 'student') {
+                if (u.department === oldDept.name) {
+                  return { ...u, department: updates.name! } as StudentUser;
+                }
+                return u;
+              }
+              if (u.role === 'teacher') {
+                const depts = (u.departments || []).map((d) =>
+                  d === oldDept.name ? updates.name! : d
+                );
+                return { ...u, departments: depts } as TeacherUser;
+              }
+              return u;
             })
           );
           setCourses((prev) =>
@@ -1916,11 +2015,10 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 1. Filter Students (Dept + Semester)
     const filteredStudents = students.filter((s) => {
-      const depts = getUserDepartments(s);
+      const studentDept = getUserPrimaryDepartment(s);
       const matchesDept =
         department === 'ALL' ||
-        depts.some((d) => d.trim().toLowerCase() === department.trim().toLowerCase()) ||
-        s.department?.trim().toLowerCase() === department.trim().toLowerCase();
+        studentDept.trim().toLowerCase() === department.trim().toLowerCase();
       const matchesSem =
         !targetSem ||
         Number(s.semester) === targetSem.number ||
@@ -1934,10 +2032,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? teachers
         : teachers.filter((t) => {
             const depts = getUserDepartments(t);
-            return (
-              depts.some((d) => d.trim().toLowerCase() === department.trim().toLowerCase()) ||
-              t.department?.trim().toLowerCase() === department.trim().toLowerCase()
-            );
+            return depts.some((d) => d.trim().toLowerCase() === department.trim().toLowerCase());
           });
 
     // 3. Filter Courses (Dept + Semester)

@@ -198,6 +198,7 @@ export const AdminDepartmentModal: React.FC<AdminDepartmentModalProps> = ({
       }
 
       setIsSubmitting(false);
+      resetFormFields();
       onClose();
     } catch (err: any) {
       setFormError(err.message || 'An error occurred while saving the department.');
@@ -205,9 +206,28 @@ export const AdminDepartmentModal: React.FC<AdminDepartmentModalProps> = ({
     }
   };
 
+  const resetFormFields = () => {
+    setName('');
+    setCode('');
+    setHodId('');
+    setDescription('');
+    setFormError(null);
+  };
+
+  const handleClose = () => {
+    resetFormFields();
+    onClose();
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-      <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-scale-in">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in"
+      onClick={handleClose}
+    >
+      <div
+        className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-scale-in"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -218,7 +238,7 @@ export const AdminDepartmentModal: React.FC<AdminDepartmentModalProps> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="text-slate-400 hover:text-white transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -425,7 +445,7 @@ export const AdminDepartmentModal: React.FC<AdminDepartmentModalProps> = ({
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={isSubmitting}
               className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
             >

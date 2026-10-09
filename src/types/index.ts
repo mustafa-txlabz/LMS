@@ -14,30 +14,67 @@ export interface BacklogCourse {
   detectedAt?: string;
 }
 
-export interface User {
+export interface BaseUser {
   id: string;
   name: string;
   email: string;
-  role: Role;
-  avatar?: string;
-  departments: string[]; // Unified departments array
-  department?: string; // Optional legacy compatibility field
-  rollNumber?: string; // For students, e.g. 29 or CS-2023-042
-  session?: number; // Enrollment session year, e.g. 2026 or 2021
-  sessionYear?: number; // Alias for session
-  designation?: string; // For teachers, e.g. Associate Professor
-  semester?: number; // Current semester for student, e.g. 5
-  admissionType?: AdmissionType; // 'fresh' or 'transfer'
-  academicStatus?: AcademicStatus; // 'active' | 'probation' | 'graduated' | 'detained' | 'repeat'
-  cgpa?: number;
-  creditsEarned?: number;
-  backlogCourses?: BacklogCourse[]; // Course-level backlogs/repeat courses
   password?: string;
-  dob?: string; // Date of birth YYYY-MM-DD
+  avatar?: string;
+  dob?: string;
   phone?: string;
   address?: string;
   bio?: string;
 }
+
+export interface AdminUser extends BaseUser {
+  role: 'admin';
+  department?: undefined;
+  departments?: undefined;
+  designation?: string;
+  semester?: undefined;
+  admissionType?: undefined;
+  academicStatus?: undefined;
+  cgpa?: undefined;
+  creditsEarned?: undefined;
+  backlogCourses?: undefined;
+  rollNumber?: undefined;
+  session?: undefined;
+  sessionYear?: undefined;
+}
+
+export interface TeacherUser extends BaseUser {
+  role: 'teacher';
+  departments: string[]; // Teachers can belong to multiple departments (array)
+  designation?: string;
+  department?: undefined;
+  semester?: undefined;
+  admissionType?: undefined;
+  academicStatus?: undefined;
+  cgpa?: undefined;
+  creditsEarned?: undefined;
+  backlogCourses?: undefined;
+  rollNumber?: undefined;
+  session?: undefined;
+  sessionYear?: undefined;
+}
+
+export interface StudentUser extends BaseUser {
+  role: 'student';
+  department: string; // Students belong to exactly one department (string)
+  departments?: undefined;
+  rollNumber?: string;
+  session?: number;
+  sessionYear?: number;
+  semester: number;
+  admissionType?: AdmissionType;
+  academicStatus?: AcademicStatus;
+  cgpa?: number;
+  creditsEarned?: number;
+  backlogCourses?: BacklogCourse[];
+  designation?: undefined;
+}
+
+export type User = AdminUser | TeacherUser | StudentUser;
 
 export interface Semester {
   id: string;
